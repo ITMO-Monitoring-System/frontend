@@ -26,7 +26,7 @@ jobs:
           REPO_URL: git@github.com:nikitos212/frontend.git
         run: |
           echo "Подключаемся к серверу и деплоим..."
-          ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << 'EOF'
+          ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << EOF
             set -e
             echo "Обновляем код на сервере..."
             mkdir -p ~/frontend
