@@ -25,18 +25,10 @@ jobs:
 
       - name: Upload project to server (rsync)
         run: |
-          echo "Содержимое текущей директории перед копированием:"
-          ls -la
-          echo ""
-          echo "Проверяем наличие Dockerfile:"
-          ls -la Dockerfile || echo "Dockerfile не найден в корне"
-          
           rsync -az --delete \
             --exclude ".git" \
-            --exclude ".github" \
+            --exclude ".env*" \
             --exclude "node_modules" \
-            --exclude ".env" \
-            --exclude ".env.*" \
             -e "ssh -p ${{ secrets.SSH_PORT }}" \
             ./ \
             "${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/home/deploy/frontend/"
@@ -46,18 +38,27 @@ jobs:
           ssh -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}" << 'EOF'
             set -e
             cd /home/deploy/frontend
-            echo "Проверяем содержимое папки на сервере:"
+            
+            echo "=== Проверяем файлы на сервере ==="
             ls -la
             echo ""
-            echo "Проверяем наличие Dockerfile:"
-            ls -la Dockerfile || echo "Dockerfile не найден"
-            echo ""
-            echo "Собираем Docker образ..."
+            
+            echo "=== Собираем Docker образ... ==="
             docker build -t frontend:latest .
-            echo "Останавливаем предыдущий контейнер..."
+            
+            echo "=== Останавливаем предыдущий контейнер... ==="
             docker stop frontend 2>/dev/null || true
             docker rm frontend 2>/dev/null || true
-            echo "Запускаем новый контейнер..."
-            docker run -d --name frontend -p 80:80 --restart unless-stopped frontend:latest
-            echo "✅ Деплой завершён!"
+            
+            echo "=== Запускаем новый контейнер... ==="
+            docker run -d \
+              --name frontend \
+              -p 80:80 \
+              --restart unless-stopped \
+              frontend:latest
+            
+            echo "=== Проверяем запущенные контейнеры ==="
+            docker ps --filter "name=frontend"
+            
+            echo "✅ Деплой успешно завершён!"
           EOF
