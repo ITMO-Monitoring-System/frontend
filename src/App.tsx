@@ -6,6 +6,8 @@ import RegisterPage from './pages/RegisterPage'
 import Dashboard from './pages/Dashboard'
 
 const RequireAuth: React.FC<{ children: JSX.Element }> = ({ children }) => {
+  const { user } = useContext(AuthContext)
+  if (!user) return <Navigate to="/login" />
   return children
 }
 
