@@ -25,43 +25,28 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USERNAME }}
           REPO_URL: git@github.com:nikitos212/frontend.git
         run: |
-          n=0
-          until [ $n -ge 3 ]
-          do
-            echo "Попытка деплоя #$((n+1))..."
-            
-            # Формируем команду для выполнения на удаленном сервере
-            SSH_CMD=$(cat << 'REMOTE_EOF'
-              set -e
-              echo "Обновляем код на сервере..."
-              cd ~/frontend || mkdir -p ~/frontend
-              if [ -d ~/frontend/.git ]; then
-                cd ~/frontend
-                git reset --hard
-                git pull origin main
-              else
-                git clone "$REPO_URL" ~/frontend
-                cd ~/frontend
-              fi
-              echo "Собираем Docker образ..."
-              docker build -t frontend:latest .
-              echo "Останавливаем предыдущий контейнер..."
-              docker stop frontend || true
-              docker rm frontend || true
-              echo "Запускаем новый контейнер..."
-              docker run -d --name frontend -p 80:80 --restart unless-stopped frontend:latest
-            REMOTE_EOF
-            )
-            
-            # Выполняем команду на удаленном сервере
-            ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "$SSH_CMD"
-            
-            if [ $? -eq 0 ]; then
-              echo "Деплой успешно завершен!"
-              break
+          echo "Подключаемся к серверу и деплоим..."
+          ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" bash << 'EOF'
+            set -e
+            echo "Обновляем код на сервере..."
+            mkdir -p ~/frontend
+            cd ~/frontend
+            if [ -d .git ]; then
+              git reset --hard
+              git pull origin main
+            else
+              git clone "$REPO_URL" .
             fi
-            
-            n=$((n+1))
-            echo "Попытка #$n не удалась, повтор через 90 секунд"
-            sleep 90
-          done
+
+            echo "Собираем Docker образ..."
+            docker build -t frontend:latest .
+
+            echo "Останавливаем предыдущий контейнер..."
+            docker stop frontend || true
+            docker rm frontend || true
+
+            echo "Запускаем новый контейнер..."
+            docker run -d --name frontend -p 80:80 --restart unless-stopped frontend:latest
+
+            echo "Деплой завершён успешно!"
+          EOF
