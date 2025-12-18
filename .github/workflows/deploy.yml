@@ -29,7 +29,9 @@ jobs:
           until [ $n -ge 3 ]
           do
             echo "Попытка деплоя #$((n+1))..."
-            ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" /bin/bash << 'EOF'
+            
+            # Формируем команду для выполнения на удаленном сервере
+            SSH_CMD=$(cat << 'REMOTE_EOF'
               set -e
               echo "Обновляем код на сервере..."
               cd ~/frontend || mkdir -p ~/frontend
@@ -48,11 +50,17 @@ jobs:
               docker rm frontend || true
               echo "Запускаем новый контейнер..."
               docker run -d --name frontend -p 80:80 --restart unless-stopped frontend:latest
-            EOF
+            REMOTE_EOF
+            )
+            
+            # Выполняем команду на удаленном сервере
+            ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "$SSH_CMD"
+            
             if [ $? -eq 0 ]; then
               echo "Деплой успешно завершен!"
               break
             fi
+            
             n=$((n+1))
             echo "Попытка #$n не удалась, повтор через 90 секунд"
             sleep 90
