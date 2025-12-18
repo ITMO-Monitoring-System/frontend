@@ -11,10 +11,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.8.1
+        uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
@@ -36,18 +36,18 @@ jobs:
               if [ -d ~/frontend/.git ]; then
                 cd ~/frontend
                 git reset --hard
-                git pull
+                git pull origin main
               else
                 git clone $REPO_URL ~/frontend
+                cd ~/frontend
               fi
-              cd ~/frontend
               echo "Собираем Docker образ..."
               docker build -t frontend:latest .
               echo "Останавливаем предыдущий контейнер..."
               docker stop frontend || true
               docker rm frontend || true
               echo "Запускаем новый контейнер..."
-              docker run -d --name frontend -p 80:80 frontend:latest
+              docker run -d --name frontend -p 80:80 --restart unless-stopped frontend:latest
             EOF && break
             n=$((n+1))
             echo "Попытка #$n не удалась, повтор через 90 секунд"
