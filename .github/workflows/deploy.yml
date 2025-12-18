@@ -29,7 +29,7 @@ jobs:
           until [ $n -ge 3 ]
           do
             echo "Попытка деплоя #$((n+1))..."
-            ssh -o StrictHostKeyChecking=no -p $SSH_PORT $SSH_USER@$SSH_HOST << 'EOF'
+            ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" /bin/bash << 'EOF'
               set -e
               echo "Обновляем код на сервере..."
               cd ~/frontend || mkdir -p ~/frontend
@@ -38,7 +38,7 @@ jobs:
                 git reset --hard
                 git pull origin main
               else
-                git clone $REPO_URL ~/frontend
+                git clone "$REPO_URL" ~/frontend
                 cd ~/frontend
               fi
               echo "Собираем Docker образ..."
@@ -48,7 +48,11 @@ jobs:
               docker rm frontend || true
               echo "Запускаем новый контейнер..."
               docker run -d --name frontend -p 80:80 --restart unless-stopped frontend:latest
-            EOF && break
+            EOF
+            if [ $? -eq 0 ]; then
+              echo "Деплой успешно завершен!"
+              break
+            fi
             n=$((n+1))
             echo "Попытка #$n не удалась, повтор через 90 секунд"
             sleep 90
