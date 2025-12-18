@@ -31,11 +31,17 @@ jobs:
             ./ \
             "${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/home/deploy/frontend/"
 
-      - name: Build & run containers on server
+      - name: Build & run Docker container on server
         run: |
           ssh -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}" << 'EOF'
             set -e
             cd /home/deploy/frontend
-            docker compose -p frontend up -d --build
-            docker compose -p frontend ps
+            echo "Собираем Docker образ..."
+            docker build -t frontend:latest .
+            echo "Останавливаем предыдущий контейнер..."
+            docker stop frontend || true
+            docker rm frontend || true
+            echo "Запускаем новый контейнер..."
+            docker run -d --name frontend -p 80:80 --restart unless-stopped frontend:latest
+            echo "Деплой завершён!"
           EOF
