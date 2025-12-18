@@ -33,25 +33,30 @@ export default function FaceUploader() {
   };
 
   return (
-    <div className="p-4 border rounded">
-      <h3 className="font-semibold mb-2">Загрузить фото лица (до 3)</h3>
-      <input
-        type="file"
-        accept="image/*"
-        onChange={(e) => e.target.files && onFile(e.target.files[0])}
-      />
-      <div className="flex gap-2 mt-2">
-        {files.slice(0, 3).map((src, i) => (
-          <img key={i} src={src} className="w-20 h-20 object-cover rounded" />
+    <div className="face-uploader">
+      <h3>Загрузить фото лица</h3>
+
+      <label className="file-input">
+        Выбрать файл
+        <input
+          type="file"
+          accept="image/*"
+          onChange={e => e.target.files && onFile(e.target.files[0])}
+        />
+      </label>
+
+      <div className="preview">
+        {files.map((src, i) => (
+          <img key={i} src={src} alt={`face-${i}`} />
         ))}
       </div>
+
       <button
         onClick={submit}
         disabled={uploading || files.length === 0}
-        className="mt-2 px-3 py-1 bg-green-600 text-white rounded"
       >
-        Сохранить
+        {uploading ? 'Загрузка…' : 'Сохранить'}
       </button>
     </div>
-  );
+  )
 }

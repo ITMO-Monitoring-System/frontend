@@ -1,0 +1,25 @@
+.group-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+}
+
+.group-selector label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.group-selector select {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  font-size: 14px;
+  background: white;
+  cursor: pointer;
+}
+
+.group-selector select:focus {
+  outline: none;
+  border-color: var(--accent);
+}

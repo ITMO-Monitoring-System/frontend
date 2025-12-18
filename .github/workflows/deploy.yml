@@ -1,0 +1,55 @@
+name: Deploy Frontend
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.8.1
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Deploy Docker container
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USERNAME }}
+          REPO_URL: git@github.com:nikitos212/frontend.git
+        run: |
+          n=0
+          until [ $n -ge 3 ]
+          do
+            echo "Попытка деплоя #$((n+1))..."
+            ssh -o StrictHostKeyChecking=no -p $SSH_PORT $SSH_USER@$SSH_HOST << 'EOF'
+              set -e
+              echo "Обновляем код на сервере..."
+              cd ~/frontend || mkdir -p ~/frontend
+              if [ -d ~/frontend/.git ]; then
+                cd ~/frontend
+                git reset --hard
+                git pull
+              else
+                git clone $REPO_URL ~/frontend
+              fi
+              cd ~/frontend
+              echo "Собираем Docker образ..."
+              docker build -t frontend:latest .
+              echo "Останавливаем предыдущий контейнер..."
+              docker stop frontend || true
+              docker rm frontend || true
+              echo "Запускаем новый контейнер..."
+              docker run -d --name frontend -p 80:80 frontend:latest
+            EOF && break
+            n=$((n+1))
+            echo "Попытка #$n не удалась, повтор через 90 секунд"
+            sleep 90
+          done
