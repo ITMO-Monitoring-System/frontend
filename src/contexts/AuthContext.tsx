@@ -1,46 +1,82 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { createContext, useState, useEffect } from 'react';
-import type { User } from '../types';
-import { me } from '../services/api';
-import { AuthTokenStorage } from '../services/authToken';
+// src/contexts/AuthContext.tsx
+import React, { createContext, useEffect, useState } from 'react'
+import type { User } from '../types'
+import { me } from '../services/api'
+import { AuthTokenStorage } from '../services/authToken'
 
-// eslint-disable-next-line react-refresh/only-export-components
-export const AuthContext = createContext<any>(null);
+
+
+export const AuthContext = createContext<any>(null)
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(AuthTokenStorage.get());
+  const [user, setUser] = useState<User | null>(null)
+  const [token, setToken] = useState<string | null>(AuthTokenStorage.get())
+  const [loading, setLoading] = useState<boolean>(!!token)
 
   useEffect(() => {
-    async function fetch() {
-      if (token) {
-        try {
-          const r = await me();
-          setUser(r.data);
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        } catch (e) {
-          AuthTokenStorage.clear();
-          setToken(null);
-          setUser(null);
+    let mounted = true
+
+    async function loadMe() {
+      if (!token) {
+        setLoading(false)
+        return
+      }
+
+      // Special local token for test admin (offline)
+      if (token === 'admin-token') {
+        if (mounted) {
+          setUser({ id: 'admin', name: 'Admin', email: 'admin', role: 'teacher' } as User)
+          setLoading(false)
         }
+        return
+      }
+
+      try {
+        const r = await me()
+        if (!mounted) return
+        setUser(r.data)
+      } catch (err: any) {
+        // IMPORTANT: don't clear token on network errors (connection refused).
+        // Only clear token when we receive explicit 401 Unauthorized.
+        const status = err?.response?.status
+        if (status === 401) {
+          AuthTokenStorage.clear()
+          setToken(null)
+          setUser(null)
+        } else {
+          // network error - keep token but don't consider user loaded
+          console.warn('[Auth] me() failed, network error or backend down, keeping token', err?.message ?? err)
+        }
+      } finally {
+        if (mounted) setLoading(false)
       }
     }
-    fetch();
-  }, [token]);
 
-  const login = (token: string) => {
-    AuthTokenStorage.set(token);
-    setToken(token);
-  };
+    loadMe()
+    return () => { mounted = false }
+  }, [token])
+
+  const login = (t: string) => {
+    AuthTokenStorage.set(t)
+    setToken(t)
+    // if admin-token, set local user immediately; otherwise me() effect will run
+    if (t === 'admin-token') {
+      setUser({ id: 'admin', name: 'Admin', email: 'admin', role: 'teacher' } as User)
+      setLoading(false)
+    } else {
+      setLoading(true)
+    }
+  }
+
   const logout = () => {
-    AuthTokenStorage.clear();
-    setToken(null);
-    setUser(null);
-  };
+    AuthTokenStorage.clear()
+    setToken(null)
+    setUser(null)
+  }
 
   return (
-    <AuthContext.Provider value={{ user, setUser, token, login, logout }}>
+    <AuthContext.Provider value={{ user, token, login, logout, setUser, loading }}>
       {children}
     </AuthContext.Provider>
-  );
-};
+  )
+}

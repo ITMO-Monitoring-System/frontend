@@ -1,0 +1,86 @@
+/* File: src/components/header-bar.css */
+
+.header-bar {
+  position: sticky;
+  top: 0;
+  z-index: 90;
+  background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(255,255,255,0.92));
+  border-bottom: 1px solid rgba(16,24,40,0.06);
+  backdrop-filter: blur(4px);
+  height: 64px; /* увеличенная высота */
+  display: flex;
+  align-items: center;
+}
+
+/* inner container centered on page */
+.header-inner {
+  position: relative;
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+}
+
+.header-left {
+  width: 140px; /* reserve space equal to actions width */
+  min-width: 80px;
+}
+
+.header-center {
+  position: absolute;
+  left: 1%;
+  transform: translateX(-50%);
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+  white-space: nowrap;
+  text-align: center;
+  pointer-events: none; /* so clicks go to actions if overlap */
+}
+
+/* Right-side actions (user + logout) */
+.header-actions {
+  margin-left: 95%;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.header-user {
+  font-size: 14px;
+  color: #0f172a;
+  font-weight: 600;
+  padding: 6px 8px;
+  background: rgba(79,70,229,0.06);
+  border-radius: 8px;
+}
+
+/* logout button */
+.logout-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid rgba(16,24,40,0.06);
+  background: #fff;
+  color: #0f172a;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  box-shadow: 0 6px 18px rgba(15,23,42,0.04);
+}
+
+.logout-btn:hover {
+  background: #f3f4ff;
+  border-color: rgba(79,70,229,0.12);
+}
+
+/* responsive tweaks */
+@media (max-width: 720px) {
+  .header-inner { padding: 0 10px; }
+  .header-center { font-size: 15px; }
+  .header-left { width: 90px; }
+  .header-user { display: none; }
+}
