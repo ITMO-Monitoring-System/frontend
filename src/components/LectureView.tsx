@@ -175,7 +175,6 @@ export default function LectureView() {
 
       await new Promise(res => setTimeout(res, 50))
 
-      const snapshot = Object.values(attendance).map(a => ({ ...a })) 
       const presentIds = Object.entries(attendance).filter(([, v]) => (v.totalMs > 0) || v.present).map(([k]) => k)
 
       if (lid) {
