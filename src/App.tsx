@@ -21,6 +21,8 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/student" element={<StudentProfile />} />
+          <Route path="/teacher" element={<LectureView />} />
           <Route path="/admin" element={<RequireAuth roles={['admin']}><AdminPanel /></RequireAuth>} />
           <Route path="/" element={<RequireAuth><MainRouter /></RequireAuth>} />
         </Routes>

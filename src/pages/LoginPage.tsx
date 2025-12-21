@@ -17,7 +17,7 @@ export default function LoginPage() {
       const fakeToken = 'teacher-token'
       login(fakeToken)
       setUser({ id: 'teacher', name: 'Преподаватель', email: 'teacher', role: 'teacher' })
-      nav('/')
+      nav('/teacher')
       return
     }
 
@@ -33,7 +33,7 @@ export default function LoginPage() {
       const fakeToken = 'student-token'
       login(fakeToken)
       setUser({ id: 'student', name: 'Студент', email: 'student', role: 'student' })
-      nav('/')
+      nav('/student')
       return
     }
 
