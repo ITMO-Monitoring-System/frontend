@@ -7,7 +7,8 @@ import { exportAttendanceToXlsx, exportSessionsToXlsx } from '../utils/exportXls
 import GroupSelector from './GroupSelector'
 import './lecture.css'
 
-const WS_BASE = import.meta.env.VITE_WS_BASE ?? `ws://89.111.170.130:8000`
+const FRAME_WS_BASE = import.meta.env.VITE_WS_BASE
+const EVENTS_WS_BASE = import.meta.env.VITE_WS_EVENTS
 
 function fmtMs(ms: number) {
   if (!ms || ms <= 0) return '0s'
@@ -24,7 +25,8 @@ export default function LectureView() {
   const { token } = useContext(AuthContext)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const wsRef = useRef<WsService | null>(null)
+  const frameWsRef = useRef<WsService | null>(null)
+  const eventsWsRef = useRef<WsService | null>(null)
   const lastObjectUrl = useRef<string | null>(null)
 
   const [imageSrc, setImageSrc] = useState<string | null>(null)
@@ -37,7 +39,8 @@ export default function LectureView() {
 
   useEffect(() => {
     return () => {
-      if (wsRef.current) { wsRef.current.close(); wsRef.current = null }
+      if (frameWsRef.current) { frameWsRef.current.close(); frameWsRef.current = null }
+      if (eventsWsRef.current) { eventsWsRef.current.close(); eventsWsRef.current = null }
       if (lastObjectUrl.current) { try { URL.revokeObjectURL(lastObjectUrl.current) } catch {} ; lastObjectUrl.current = null }
     }
   }, [])
@@ -110,7 +113,7 @@ export default function LectureView() {
     setDetections(newDetections)
   }
 
-  const handleWs = (msg: any) => {
+  const handleFrameWs = (msg: any) => {
     if (!msg) return
     if (msg.type === 'binary' && msg.blob instanceof Blob) {
       if (lastObjectUrl.current) { try { URL.revokeObjectURL(lastObjectUrl.current) } catch {} ; lastObjectUrl.current = null }
@@ -127,19 +130,52 @@ export default function LectureView() {
       processDetections(msg.detections)
       return
     }
-    if (msg.type === 'log' && typeof msg.text === 'string') {
-      console.log('[WS LOG]', msg.text)
+  }
+
+  const handleEventsWs = (msg: any) => {
+    if (!msg) return
+    if (typeof msg === 'string') {
+      try {
+        const parsed = JSON.parse(msg)
+        if (parsed && Array.isArray(parsed.detections)) {
+          processDetections(parsed.detections)
+          return
+        }
+      } catch {}
+      return
+    }
+    if (msg.type === 'detections' && Array.isArray(msg.detections)) {
+      processDetections(msg.detections)
+      return
+    }
+    if (msg.detections && Array.isArray(msg.detections)) {
+      processDetections(msg.detections)
       return
     }
   }
 
-  const connectWsForLecture = (lectureId: string) => {
-    if (wsRef.current) { wsRef.current.close(); wsRef.current = null }
-    const wsUrl = `${WS_BASE}/ws/stream?lecture_id=${encodeURIComponent(lectureId)}`
+  const connectFrameWsForLecture = (lectureId: string) => {
+    if (frameWsRef.current) { frameWsRef.current.close(); frameWsRef.current = null }
+    const wsUrl = `${FRAME_WS_BASE}/ws/stream?lecture_id=${encodeURIComponent(lectureId)}`
     const ws = new WsService(wsUrl)
-    ws.addHandler(handleWs)
+    ws.addHandler(handleFrameWs)
     ws.connect(token ?? undefined)
-    wsRef.current = ws
+    frameWsRef.current = ws
+  }
+
+  const connectEventsWsAndSubscribe = (lectureId: string) => {
+    if (eventsWsRef.current) { eventsWsRef.current.close(); eventsWsRef.current = null }
+    const wsUrl = `${EVENTS_WS_BASE}`
+    const ws = new WsService(wsUrl)
+    ws.addHandler(handleEventsWs)
+    ws.connect(token ?? undefined)
+    eventsWsRef.current = ws
+    const onOpen = (m: any) => {
+      if (m && m.type === 'open') {
+        ws.send({ action: 'subscribe', lecture_id: lectureId })
+      }
+    }
+    ws.addHandler(onOpen)
   }
 
   const startSession = async () => {
@@ -149,12 +185,12 @@ export default function LectureView() {
       const res = await startLecture(lectureId, { durable: true, auto_delete: false })
       const returnedId = res?.data?.lecture_id ?? res?.data?.lectureId ?? lectureId
       currentLectureId.current = String(returnedId)
-      connectWsForLecture(String(returnedId))
+      connectFrameWsForLecture(String(returnedId))
+      connectEventsWsAndSubscribe(String(returnedId))
       setAttendance({})
       setDetections([])
       setStatus('running')
     } catch (err: any) {
-      console.error('startSession failed', err)
       setStatus('error')
       alert('Не удалось запустить лекцию: ' + (err?.response?.data?.message ?? err?.message ?? 'unknown'))
     }
@@ -171,7 +207,12 @@ export default function LectureView() {
       })
       const presentIds = snapshot.filter(s => (s.totalMs ?? 0) > 0).map(s => s.id)
       if (lid) sessionAttendanceRef.current[String(lid)] = new Set(presentIds)
-      if (wsRef.current) { wsRef.current.close(); wsRef.current = null }
+      if (frameWsRef.current) { frameWsRef.current.close(); frameWsRef.current = null }
+      if (eventsWsRef.current) {
+        eventsWsRef.current.send({ action: 'unsubscribe', lecture_id: lid })
+        eventsWsRef.current.close()
+        eventsWsRef.current = null
+      }
       if (lid) { await endLecture(String(lid), { if_unused: false, if_empty: false }); currentLectureId.current = null }
     } catch (err) {
       console.warn('stopSession error', err)
@@ -216,7 +257,9 @@ export default function LectureView() {
         </div>
 
         <div className="video-frame large">
-          <img ref={imgRef} src={imageSrc ?? undefined} alt="frame" className="video-img" />
+          {imageSrc ? (
+            <img ref={imgRef} src={imageSrc} alt="frame" className="video-img" />
+          ) : null}
           <canvas ref={canvasRef} className="video-canvas" />
           {!imageSrc && status !== 'running' && (
             <div className="video-placeholder">Нет видео — нажмите «Начать лекцию»</div>
