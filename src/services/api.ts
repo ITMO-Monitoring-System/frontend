@@ -7,7 +7,7 @@ const api = axios.create({ baseURL: API_BASE })
 
 api.interceptors.request.use((cfg: { headers: any }) => {
   const token = AuthTokenStorage.get()
-  if (token) cfg.headers = { ...(cfg.headers || {}), Authorization: `Bearer ${token}` };
+  if (token) cfg.headers = { ...(cfg.headers || {}), Authorization: `Bearer ${token}` }
   return cfg
 })
 
@@ -28,43 +28,31 @@ export const uploadFace = (userId: string, fileBase64: string) =>
 export const createUser = (payload: { name: string; email: string; role?: string; password?: string }) =>
   api.post('/admin/users', payload)
 
-export const getMyAttendance = async () => {
-  const token = AuthTokenStorage.get()
-  if (token === 'admin-token') {
-    return Promise.resolve({ data: { attended: 12, total: 15 } })
-  }
-  return api.get<{ attended: number; total: number }>('/attendance/me')
+
+export const listLectures = () => api.get<{ active: string[] }>('/api/lectures')
+
+export const startLecture = async (lectureId?: string, body: any = { durable: true, auto_delete: false }) => {
+  const lid = lectureId ?? `lec-${Date.now()}`
+  return api.post(`/api/lectures/${encodeURIComponent(lid)}/start`, body)
+}
+
+export const endLecture = async (lectureId: string, body: any = { if_unused: false, if_empty: false }) => {
+  return api.post(`/api/lectures/${encodeURIComponent(lectureId)}/end`, body)
 }
 
 export const listGroups = async () => {
   const token = AuthTokenStorage.get()
   if (token === 'admin-token') {
     const mock = [
-      { id: 'g1', name: 'ИС-13' },
-      { id: 'g2', name: 'ИС-09' },
-      { id: 'g3', name: 'КТ-39' },
+      { id: 'g1', name: 'ИСИ-01' },
+      { id: 'g2', name: 'ИСИ-02' },
+      { id: 'g3', name: 'КТ-2025' },
     ]
     return Promise.resolve({ data: mock })
   }
   return api.get('/groups')
 }
 
-export const joinGroup = (userId: string, groupId: string) => api.post(`/groups/${groupId}/join`, { userId })
-
-export const startLecture = async (payload: { groupId?: string } = {}) => {
-  const token = AuthTokenStorage.get()
-  if (token === 'admin-token') {
-    return Promise.resolve({ data: { lectureId: 'mock-lecture-1' } })
-  }
-  return api.post('/lectures/start', payload)
-}
-
-export const stopLecture = async (payload: { lectureId?: string } = {}) => {
-  const token = AuthTokenStorage.get()
-  if (token === 'admin-token') {
-    return Promise.resolve({ data: { ok: true } })
-  }
-  return api.post('/lectures/stop', payload)
-}
+export const getMyAttendance = () => api.get<{ attended: number; total: number }>('/attendance/me')
 
 export default api
