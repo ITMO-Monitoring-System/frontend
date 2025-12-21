@@ -165,7 +165,7 @@ export default function LectureView() {
 
   const connectEventsWsAndSubscribe = (lectureId: string) => {
     if (eventsWsRef.current) { eventsWsRef.current.close(); eventsWsRef.current = null }
-    const wsUrl = `${EVENTS_WS_BASE}`
+    const wsUrl = `${EVENTS_WS_BASE}/api/ws`
     const ws = new WsService(wsUrl)
     ws.addHandler(handleEventsWs)
     ws.connect(token ?? undefined)

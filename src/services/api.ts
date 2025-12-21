@@ -5,7 +5,7 @@ import type { User } from '../types'
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://89.111.170.130:8000'
 const api = axios.create({ baseURL: API_BASE })
 
-api.interceptors.request.use((cfg: { headers: any }) => {
+api.interceptors.request.use((cfg: any) => {
   const token = AuthTokenStorage.get()
   if (token) cfg.headers = { ...(cfg.headers || {}), Authorization: `Bearer ${token}` }
   return cfg
@@ -25,9 +25,13 @@ export const updateProfile = (userId: string, payload: Partial<User>) =>
 export const uploadFace = (userId: string, fileBase64: string) =>
   api.post(`/users/${userId}/faces`, { fileBase64 })
 
-export const createUser = (payload: { name: string; email: string; role?: string; password?: string }) =>
-  api.post('/admin/users', payload)
+export const createUser = (payload: { isu: string; last_name: string; name: string; patronymic?: string; role?: string }) =>
+  api.post('/api/user/create', payload)
 
+export const addUserToGroup = (groupId: string, isu: string) =>
+  api.post(`/api/groups/${encodeURIComponent(groupId)}/addUser`, { isu })
+
+export const listUsers = () => api.get('/users')
 
 export const listLectures = () => api.get<{ active: string[] }>('/api/lectures')
 

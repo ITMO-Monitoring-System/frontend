@@ -1,81 +1,49 @@
-// src/contexts/AuthContext.tsx
-import React, { createContext, useEffect, useState } from 'react'
+import  { createContext, useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import type { User } from '../types'
-import { me } from '../services/api'
-import { AuthTokenStorage } from '../services/authToken'
 
+type AuthContextType = {
+  token: string | null
+  user: User | null
+  login: (token: string) => void
+  logout: () => void
+  setUser: (u: User | null) => void
+}
 
+export const AuthContext = createContext<AuthContextType>({
+  token: null,
+  user: null,
+  login: () => {},
+  logout: () => {},
+  setUser: () => {},
+})
 
-export const AuthContext = createContext<any>(null)
-
-export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null)
-  const [token, setToken] = useState<string | null>(AuthTokenStorage.get())
-  const [loading, setLoading] = useState<boolean>(!!token)
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'))
+  const [user, setUserState] = useState<User | null>(() => {
+    const raw = localStorage.getItem('user')
+    return raw ? JSON.parse(raw) : null
+  })
 
   useEffect(() => {
-    let mounted = true
-
-    async function loadMe() {
-      if (!token) {
-        setLoading(false)
-        return
-      }
-
-      // Special local token for test admin (offline)
-      if (token === 'admin-token') {
-        if (mounted) {
-          setUser({ id: 'admin', name: 'Admin', email: 'admin', role: 'teacher' } as User)
-          setLoading(false)
-        }
-        return
-      }
-
-      try {
-        const r = await me()
-        if (!mounted) return
-        setUser(r.data)
-      } catch (err: any) {
-        // IMPORTANT: don't clear token on network errors (connection refused).
-        // Only clear token when we receive explicit 401 Unauthorized.
-        const status = err?.response?.status
-        if (status === 401) {
-          AuthTokenStorage.clear()
-          setToken(null)
-          setUser(null)
-        } else {
-          // network error - keep token but don't consider user loaded
-          console.warn('[Auth] me() failed, network error or backend down, keeping token', err?.message ?? err)
-        }
-      } finally {
-        if (mounted) setLoading(false)
-      }
-    }
-
-    loadMe()
-    return () => { mounted = false }
+    if (token) localStorage.setItem('token', token)
+    else localStorage.removeItem('token')
   }, [token])
 
-  const login = (t: string) => {
-    AuthTokenStorage.set(t)
-    setToken(t)
-    // if admin-token, set local user immediately; otherwise me() effect will run
-    if (t === 'admin-token') {
-      setUser({ id: 'admin', name: 'Admin', email: 'admin', role: 'teacher' } as User)
-      setLoading(false)
-    } else {
-      setLoading(true)
-    }
-  }
+  useEffect(() => {
+    if (user) localStorage.setItem('user', JSON.stringify(user))
+    else localStorage.removeItem('user')
+  }, [user])
 
+  const login = (t: string) => setToken(t)
   const logout = () => {
-    AuthTokenStorage.clear()
     setToken(null)
-    setUser(null)
+    setUserState(null)
   }
+  const setUser = (u: User | null) => setUserState(u)
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, setUser, loading }}>
+    <AuthContext.Provider value={{ token, user, login, logout, setUser }}>
       {children}
     </AuthContext.Provider>
   )

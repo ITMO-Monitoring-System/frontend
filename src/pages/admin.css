@@ -1,0 +1,7 @@
+.admin-page{padding:20px}
+.admin-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.admin-main{display:flex;gap:16px}
+.admin-card{background:#fff;padding:16px;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,0.06);width:480px}
+.admin-card h3{margin:0 0 12px 0}
+.admin-form{display:flex;flex-direction:column;gap:8px}
+.admin-form input,.admin-form select{padding:8px;border-radius:8px;border:1px solid #e6e9ef}
