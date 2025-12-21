@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, useContext } from 'react'
-import Hls from 'hls.js'
 import { WsService } from '../services/ws'
 import { AuthContext } from '../contexts/AuthContext'
 import { startLecture, endLecture } from '../services/api'
@@ -8,8 +7,7 @@ import { exportAttendanceToXlsx, exportSessionsToXlsx } from '../utils/exportXls
 import GroupSelector from './GroupSelector'
 import './lecture.css'
 
-const HLS_BASE = import.meta.env.VITE_HLS_BASE ?? 'http://89.111.170.130:8888'
-const WS_BASE = import.meta.env.VITE_WS_BASE ?? 'ws://localhost:8081'
+const WS_BASE = import.meta.env.VITE_WS_BASE ?? `ws://89.111.170.130:8000`
 
 function fmtMs(ms: number) {
   if (!ms || ms <= 0) return '0s'
@@ -24,35 +22,60 @@ function fmtMs(ms: number) {
 
 export default function LectureView() {
   const { token } = useContext(AuthContext)
-
-  const videoRef = useRef<HTMLVideoElement | null>(null)
-  const hlsRef = useRef<Hls | null>(null)
-
+  const imgRef = useRef<HTMLImageElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const wsRef = useRef<WsService | null>(null)
+  const lastObjectUrl = useRef<string | null>(null)
 
-  const [imagePlaceholder, setImagePlaceholder] = useState<string | null>(null)
-  const [, setDetections] = useState<Detection[]>([])
-  const [attendance, setAttendance] = useState<Record<string, {
-    id: string
-    name?: string
-    present: boolean
-    presentSince: number | null
-    totalMs: number
-    score?: number
-  }>>({})
-
+  const [imageSrc, setImageSrc] = useState<string | null>(null)
+  const [detections, setDetections] = useState<Detection[]>([])
+  const [attendance, setAttendance] = useState<Record<string, { id: string; name?: string; present: boolean; presentSince: number | null; totalMs: number }>>({})
   const [status, setStatus] = useState<'idle'|'starting'|'running'|'error'|'stopped'>('idle')
-  const [, setSelectedGroup] = useState<string | null>(null)
-
   const currentLectureId = useRef<string | null>(null)
   const sessionAttendanceRef = useRef<Record<string, Set<string>>>({})
   const usersByIdRef = useRef<Record<string, string>>({})
 
-  const [, setTick] = useState(0)
   useEffect(() => {
-    const id = setInterval(() => setTick(t => t + 1), 1000)
-    return () => clearInterval(id)
+    return () => {
+      if (wsRef.current) { wsRef.current.close(); wsRef.current = null }
+      if (lastObjectUrl.current) { try { URL.revokeObjectURL(lastObjectUrl.current) } catch {} ; lastObjectUrl.current = null }
+    }
   }, [])
+
+  useEffect(() => {
+    const img = imgRef.current
+    const canvas = canvasRef.current
+    if (!canvas || !img) return
+    const rect = img.getBoundingClientRect()
+    const dpr = window.devicePixelRatio || 1
+    canvas.style.width = rect.width + 'px'
+    canvas.style.height = rect.height + 'px'
+    canvas.width = Math.max(1, Math.round(rect.width * dpr))
+    canvas.height = Math.max(1, Math.round(rect.height * dpr))
+    const ctx = canvas.getContext('2d')!
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.clearRect(0, 0, rect.width, rect.height)
+    ctx.font = '14px sans-serif'
+    detections.forEach(d => {
+      if (!d.bbox) return
+      const [rx, ry, rw, rh] = d.bbox
+      const x = rx * rect.width
+      const y = ry * rect.height
+      const w = rw * rect.width
+      const h = rh * rect.height
+      ctx.lineWidth = 2
+      ctx.strokeStyle = '#00FF66'
+      ctx.strokeRect(x, y, w, h)
+      const label = d.name ? `${d.name} ${d.score ? `(${(d.score*100).toFixed(0)}%)` : ''}` : d.id ?? 'unknown'
+      const padding = 6
+      const metrics = ctx.measureText(label)
+      const lh = 18
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'
+      ctx.fillRect(x, Math.max(0, y - lh), metrics.width + padding, lh)
+      ctx.fillStyle = 'white'
+      ctx.fillText(label, x + 4, y - 4)
+    })
+  }, [imageSrc, detections])
 
   const processDetections = (newDetections: Detection[]) => {
     const now = Date.now()
@@ -62,9 +85,8 @@ export default function LectureView() {
       newIds.add(id)
       if (d.name) usersByIdRef.current[id] = d.name
     })
-
     setAttendance(prev => {
-      const copy: typeof prev = { ...prev }
+      const copy = { ...prev }
       Object.keys(copy).forEach(k => {
         const r = copy[k]
         if (r.present && !newIds.has(k)) {
@@ -75,27 +97,32 @@ export default function LectureView() {
       })
       newDetections.forEach(d => {
         const id = d.id ?? `${d.name ?? 'unknown'}_${Math.round((d.bbox?.[0] ?? 0)*1000)}_${Math.round((d.bbox?.[1] ?? 0)*1000)}`
-        const name = d.name
-        const score = d.score
         const existing = copy[id]
         if (!existing) {
-          copy[id] = { id, name, present: true, presentSince: now, totalMs: 0, score }
+          copy[id] = { id, name: d.name, present: true, presentSince: now, totalMs: 0 }
         } else {
-          if (!existing.present) {
-            copy[id] = { ...existing, present: true, presentSince: now, name: name ?? existing.name, score }
-          } else {
-            copy[id] = { ...existing, name: name ?? existing.name, score }
-          }
+          if (!existing.present) copy[id] = { ...existing, present: true, presentSince: now, name: d.name ?? existing.name }
+          else copy[id] = { ...existing, name: d.name ?? existing.name }
         }
       })
       return copy
     })
-
     setDetections(newDetections)
   }
 
-  const handleWsMsg = (msg: any) => {
+  const handleWs = (msg: any) => {
     if (!msg) return
+    if (msg.type === 'binary' && msg.blob instanceof Blob) {
+      if (lastObjectUrl.current) { try { URL.revokeObjectURL(lastObjectUrl.current) } catch {} ; lastObjectUrl.current = null }
+      const url = URL.createObjectURL(msg.blob)
+      lastObjectUrl.current = url
+      setImageSrc(url)
+      return
+    }
+    if ((msg.type === 'frame' || msg.type === 'frame_with_boxes') && typeof msg.imageBase64 === 'string') {
+      setImageSrc(msg.imageBase64)
+      return
+    }
     if (msg.type === 'detections' && Array.isArray(msg.detections)) {
       processDetections(msg.detections)
       return
@@ -107,62 +134,12 @@ export default function LectureView() {
   }
 
   const connectWsForLecture = (lectureId: string) => {
-    if (wsRef.current) {
-      try { wsRef.current.close() } catch {}
-      wsRef.current = null
-    }
+    if (wsRef.current) { wsRef.current.close(); wsRef.current = null }
     const wsUrl = `${WS_BASE}/ws/stream?lecture_id=${encodeURIComponent(lectureId)}`
     const ws = new WsService(wsUrl)
-    ws.addHandler(handleWsMsg)
+    ws.addHandler(handleWs)
     ws.connect(token ?? undefined)
     wsRef.current = ws
-  }
-
-  const attachHlsForLecture = (lectureId: string) => {
-    const video = videoRef.current
-    if (!video) return
-
-    const candidatePerLecture = `${HLS_BASE}/lecture/${lectureId}/index.m3u8`
-    const candidateGlobal = `${HLS_BASE}/lecture/index.m3u8`
-    if (hlsRef.current) {
-      try { hlsRef.current.destroy() } catch {}
-      hlsRef.current = null
-    }
-
-    const tryAttach = (url: string) => {
-      if (Hls.isSupported()) {
-        const hls = new Hls({ maxBufferLength: 30 })
-        hlsRef.current = hls
-        hls.on(Hls.Events.ERROR, (event: any, data: { fatal: any }) => {
-          console.warn('[HLS] error', event, data)
-          if (data && data.fatal) {
-            console.warn('[HLS] fatal error on', url)
-            hls.destroy()
-            hlsRef.current = null
-            if (url === candidatePerLecture) {
-              console.log('[HLS] trying fallback global manifest')
-              tryAttach(candidateGlobal)
-            } else {
-              setImagePlaceholder(null)
-            }
-          }
-        })
-        hls.loadSource(url)
-        hls.attachMedia(video)
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          video.play().catch(() => {})
-        })
-      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = url
-        video.addEventListener('loadedmetadata', () => {
-          video.play().catch(() => {})
-        })
-      } else {
-        console.warn('HLS not supported in this browser')
-      }
-    }
-
-    tryAttach(candidatePerLecture)
   }
 
   const startSession = async () => {
@@ -172,10 +149,7 @@ export default function LectureView() {
       const res = await startLecture(lectureId, { durable: true, auto_delete: false })
       const returnedId = res?.data?.lecture_id ?? res?.data?.lectureId ?? lectureId
       currentLectureId.current = String(returnedId)
-
-      attachHlsForLecture(String(returnedId))
       connectWsForLecture(String(returnedId))
-
       setAttendance({})
       setDetections([])
       setStatus('running')
@@ -190,43 +164,23 @@ export default function LectureView() {
     const lid = currentLectureId.current
     try {
       const now = Date.now()
-
       const snapshot = Object.entries(attendance).map(([id, r]) => {
         const runningDelta = r.present && r.presentSince ? Math.max(0, now - r.presentSince) : 0
         const total = (r.totalMs ?? 0) + runningDelta
         return { id, totalMs: total }
       })
-
       const presentIds = snapshot.filter(s => (s.totalMs ?? 0) > 0).map(s => s.id)
-
-      if (lid) {
-        sessionAttendanceRef.current[String(lid)] = new Set(presentIds)
-      }
-
-      if (wsRef.current) {
-        wsRef.current.close()
-        wsRef.current = null
-      }
-
-      if (hlsRef.current) {
-        try { hlsRef.current.destroy() } catch {}
-        hlsRef.current = null
-      }
-      if (videoRef.current) {
-        try { videoRef.current.pause(); videoRef.current.removeAttribute('src'); videoRef.current.load() } catch {}
-      }
-
-      if (lid) {
-        await endLecture(String(lid), { if_unused: false, if_empty: false })
-        currentLectureId.current = null
-      }
+      if (lid) sessionAttendanceRef.current[String(lid)] = new Set(presentIds)
+      if (wsRef.current) { wsRef.current.close(); wsRef.current = null }
+      if (lid) { await endLecture(String(lid), { if_unused: false, if_empty: false }); currentLectureId.current = null }
     } catch (err) {
       console.warn('stopSession error', err)
     } finally {
       setStatus('stopped')
       setDetections([])
       setAttendance({})
-      setImagePlaceholder(null)
+      if (lastObjectUrl.current) { try { URL.revokeObjectURL(lastObjectUrl.current) } catch {} ; lastObjectUrl.current = null }
+      setImageSrc(null)
     }
   }
 
@@ -244,18 +198,11 @@ export default function LectureView() {
     exportSessionsToXlsx(sessionAttendanceRef.current, usersByIdRef.current, 'attendance_by_lecture.csv')
   }
 
-  useEffect(() => {
-    return () => {
-      if (wsRef.current) { wsRef.current.close(); wsRef.current = null }
-      if (hlsRef.current) { try { hlsRef.current.destroy() } catch {} ; hlsRef.current = null }
-    }
-  }, [])
-
   return (
     <div className="lecture-page layout-wide">
       <div className="lecture-left">
         <div className="lecture-top-row">
-          <GroupSelector onSelect={g => setSelectedGroup(g || null)} />
+          <GroupSelector onSelect={() => {}} />
           <div className="lecture-actions unified">
             {status !== 'running' ? (
               <button className="btn primary" onClick={startSession}>Начать лекцию</button>
@@ -269,9 +216,9 @@ export default function LectureView() {
         </div>
 
         <div className="video-frame large">
-          <video ref={videoRef} controls style={{ width: '100%', height: '100%' }} />
-          { imagePlaceholder && <img src={imagePlaceholder} alt="placeholder" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> }
-          {!imagePlaceholder && status !== 'running' && (
+          <img ref={imgRef} src={imageSrc ?? undefined} alt="frame" className="video-img" />
+          <canvas ref={canvasRef} className="video-canvas" />
+          {!imageSrc && status !== 'running' && (
             <div className="video-placeholder">Нет видео — нажмите «Начать лекцию»</div>
           )}
         </div>
