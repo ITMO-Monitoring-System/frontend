@@ -25,9 +25,6 @@ export default function AdminPanel() {
   const [name, setName] = useState('')
   const [lastName, setLastName] = useState('')
   const [patronymic, setPatronymic] = useState('')
-  const [role, setRole] = useState('student')
-  const [userDept, setUserDept] = useState<number | ''>('')
-  const [userGroup, setUserGroup] = useState('')
 
   const [subjectName, setSubjectName] = useState('')
 
@@ -45,22 +42,9 @@ export default function AdminPanel() {
   }, [])
 
   useEffect(() => {
-    if (userDept === '') {
-      setGroups([])
-      setUserGroup('')
-      return
-    }
-    setGroups([])
-    listGroupsByDepartment(Number(userDept))
-      .then(r => setGroups(r.data || []))
-      .catch(() => setGroups([]))
-  }, [userDept])
-
-  useEffect(() => {
     if (bindDept === '') {
       setGroups([])
       setBindGroup('')
-      setStudentsInGroup([])
       return
     }
     setGroups([])
@@ -87,22 +71,11 @@ export default function AdminPanel() {
     }
     setBusy(true)
     try {
-      await createUser({ isu, last_name: lastName, name, patronymic, role })
-      if (userGroup) {
-        await addUserToGroup(userGroup, isu)
-      } else if (userDept && !userGroup) {
-        const depGroups = await listGroupsByDepartment(Number(userDept))
-        if (depGroups.data && depGroups.data.length === 1) {
-          await addUserToGroup(depGroups.data[0].code, isu)
-        }
-      }
+      await createUser({ isu, last_name: lastName, name, patronymic })
       setIsu('')
       setName('')
       setLastName('')
       setPatronymic('')
-      setRole('student')
-      setUserDept('')
-      setUserGroup('')
       alert('Пользователь создан')
     } catch (err) {
       console.error(err)
@@ -201,22 +174,6 @@ export default function AdminPanel() {
             <input value={lastName} onChange={e => setLastName(e.target.value)} />
             <label>Отчество</label>
             <input value={patronymic} onChange={e => setPatronymic(e.target.value)} />
-            <label>Роль</label>
-            <select value={role} onChange={e => setRole(e.target.value)}>
-              <option value="student">student</option>
-              <option value="teacher">teacher</option>
-              <option value="admin">admin</option>
-            </select>
-            <label>Направление (опционально)</label>
-            <select value={userDept} onChange={e => setUserDept(e.target.value === '' ? '' : Number(e.target.value))}>
-              <option value="">-- выберите направление --</option>
-              {departments.map(d => <option key={d.id} value={d.id}>{d.name || d.code || d.alias || d.id}</option>)}
-            </select>
-            <label>Группа (опционально)</label>
-            <select value={userGroup} onChange={e => setUserGroup(e.target.value)}>
-              <option value="">-- не добавлять --</option>
-              {groups.map(g => <option key={g.code} value={g.code}>{g.name || g.code}</option>)}
-            </select>
             <div className="actions">
               <button disabled={busy} className="btn primary" type="submit">Создать</button>
             </div>
@@ -233,13 +190,13 @@ export default function AdminPanel() {
             </div>
           </form>
 
-          <h4 style={{ marginTop: 16 }}>Существующие предметы</h4>
+          <h4 className="subtitle">Существующие предметы</h4>
           <ul className="list small">
             {subjects.map(s => <li key={s.id}>{s.name}</li>)}
           </ul>
         </section>
 
-        <section className="admin-card wide">
+        <section className="admin-card">
           <h3>Привязка студентов к группам</h3>
           <div className="bind-row">
             <div className="bind-col">
@@ -265,7 +222,7 @@ export default function AdminPanel() {
             </div>
 
             <div className="bind-col">
-              <h4>Студенты в группе</h4>
+              <h4 className="subtitle">Студенты в группе</h4>
               <div className="students-list">
                 {bindGroup ? (
                   studentsInGroup.length ? (
@@ -273,12 +230,12 @@ export default function AdminPanel() {
                       <div key={s} className="student-row">
                         <div className="student-isu">{s}</div>
                         <div>
-                          <button disabled={busy} className="btn small" onClick={() => handleUnbindStudent(s)} type="button">Удалить из группы</button>
+                          <button disabled={busy} className="btn small" onClick={() => handleUnbindStudent(s)} type="button">Удалить</button>
                         </div>
                       </div>
                     ))
                   ) : <div className="muted">Список пуст</div>
-                ) : <div className="muted">Выберите группу слева</div>}
+                ) : <div className="muted">Выберите группу</div>}
               </div>
             </div>
           </div>
