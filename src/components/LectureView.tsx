@@ -31,13 +31,13 @@ api.interceptors.request.use((cfg: any) => {
   return cfg
 })
 
-const startLectureFrame = async (lectureId?: string, body: any = { durable: true, auto_delete: false }) => {
-  const lid = lectureId ?? `lec-${Date.now()}`
-  return frameApi.post(`/api/lectures/${encodeURIComponent(lid)}/start`, body)
+const startLectureFrame = async (lectureId?: number, body: any = { durable: true, auto_delete: false }) => {
+  const lid = lectureId ?? Date.now()
+  return frameApi.post(`/api/lectures/${encodeURIComponent(String(lid))}/start`, body)
 }
 
-const endLectureFrame = async (lectureId: string, body: any = { if_unused: false, if_empty: false }) => {
-  return frameApi.post(`/api/lectures/${encodeURIComponent(lectureId)}/end`, body)
+const endLectureFrame = async (lectureId: number, body: any = { if_unused: false, if_empty: false }) => {
+  return frameApi.post(`/api/lectures/${encodeURIComponent(String(lectureId))}/end`, body)
 }
 
 function fmtMs(ms: number) {
@@ -70,8 +70,8 @@ export default function LectureView() {
   const [detections, setDetections] = useState<Detection[]>([])
   const [attendance, setAttendance] = useState<Record<string, { id: string; name?: string; present: boolean; presentSince: number | null; totalMs: number }>>({})
   const [status, setStatus] = useState<'idle'|'starting'|'running'|'error'|'stopped'>('idle')
-  const currentLectureId = useRef<string | null>(null)
-  const sessionAttendanceRef = useRef<Record<string, Set<string>>>({})
+  const currentLectureId = useRef<number | null>(null)
+  const sessionAttendanceRef = useRef<Record<number, Set<string>>>({})
   const usersByIdRef = useRef<Record<string, string>>({})
 
   const [lectures, setLectures] = useState<Lecture[]>([])
@@ -137,8 +137,12 @@ export default function LectureView() {
     if (!teacherIsu) {
       return
     }
+    const now = new Date()
+    const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7).toISOString()
+    const to = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString()
     try {
-      const response = await api.get(`/api/teachers/466777/lectures`, {
+      const response = await api.get(`/api/teachers/${encodeURIComponent(teacherIsu)}/lectures`, {
+        params: { from, to }
       })
       setLectures(response.data || [])
     } catch (err) {
@@ -150,7 +154,7 @@ export default function LectureView() {
     try {
       const [subjectsRes, groupsRes] = await Promise.all([
         api.get('/api/subjects'),
-        api.get('/groups')
+        api.get('/api/groups')
       ])
       setAvailableSubjects(subjectsRes.data || [])
       setAvailableGroups(groupsRes.data || [])
@@ -162,25 +166,13 @@ export default function LectureView() {
 
   const createLectureOrPractice = async () => {
     const teacherIsu = (user && (user.isu ?? user.id ?? (user.login as any) ?? '')) as string
-    if (!teacherIsu) {
-      alert('ISU преподавателя неизвестен')
-      return
-    }
-    if (!newLectureDate) {
-      alert('Введите дату')
-      return
-    }
-    if (!newSubjectId) {
-      alert('Выберите предмет')
-      return
-    }
-    if (newGroupIds.length === 0) {
-      alert('Выберите хотя бы одну группу')
-      return
-    }
+    if (!teacherIsu) return
+    if (!newLectureDate) return
+    if (!newSubjectId) return
+    if (newGroupIds.length === 0) return
     const payload = {
       date: newLectureDate,
-      subject_id: parseInt(newSubjectId),
+      subject_id: parseInt(newSubjectId, 10),
       group_ids: newGroupIds,
       teacher_id: teacherIsu
     }
@@ -271,9 +263,9 @@ export default function LectureView() {
     }
   }
 
-  const connectFrameWsForLecture = (lectureId: string) => {
+  const connectFrameWsForLecture = (lectureId: number) => {
     if (frameWsRef.current) { frameWsRef.current.close(); frameWsRef.current = null }
-    const wsUrl = `${FRAME_WS_BASE}/ws/stream?lecture_id=${encodeURIComponent(lectureId)}`
+    const wsUrl = `${FRAME_WS_BASE}/ws/stream?lecture_id=${encodeURIComponent(String(lectureId))}`
     const ws = new WsService(wsUrl)
     ws.addHandler(handleFrameWs)
     ws.connect(token ?? undefined)
@@ -285,16 +277,17 @@ export default function LectureView() {
     const wsUrl = `${EVENTS_WS_BASE}/api/ws`
     const ws = new WsService(wsUrl)
     ws.addHandler(handleEventsWs)
-    ws.connect(token ?? undefined)
+    ws.connect()
     eventsWsRef.current = ws
     return ws
   }
 
-  const sendSubscribe = (lectureId: string) => {
+  const sendSubscribe = (lectureId: number) => {
     const ws = connectEventsWs()
     const onOpen = (m: any) => {
       if (m && m.type === 'open') {
         ws.send({ action: 'subscribe', lecture_id: lectureId })
+        ws.removeHandler(onOpen)
       }
     }
     ws.addHandler(onOpen)
@@ -303,7 +296,7 @@ export default function LectureView() {
     }
   }
 
-  const sendUnsubscribe = (lectureId: string) => {
+  const sendUnsubscribe = (lectureId: number) => {
     if (!eventsWsRef.current) return
     try {
       eventsWsRef.current.send({ action: 'unsubscribe', lecture_id: lectureId })
@@ -313,18 +306,20 @@ export default function LectureView() {
   const startSession = async () => {
     try {
       setStatus('starting')
-      let lectureId: string
-      if (selectedLectureId) {
-        lectureId = selectedLectureId.toString()
+      let lectureId: number
+      if (selectedLectureId !== '') {
+        lectureId = selectedLectureId as number
       } else {
-        lectureId = `lec-${Date.now()}`
+        lectureId = Date.now()
       }
       const res = await startLectureFrame(lectureId, { durable: true, auto_delete: false })
-      const returnedId = res?.data?.lecture_id ?? res?.data?.lectureId ?? lectureId
-      currentLectureId.current = String(returnedId)
-      connectFrameWsForLecture(String(returnedId))
+      const returnedRaw = res?.data?.lecture_id ?? res?.data?.lectureId ?? lectureId
+      const returnedNum = Number(returnedRaw)
+      const finalId = Number.isFinite(returnedNum) ? returnedNum : lectureId
+      currentLectureId.current = finalId
+      connectFrameWsForLecture(finalId)
       connectEventsWs()
-      sendSubscribe(String(returnedId))
+      sendSubscribe(finalId)
       setAttendance({})
       setDetections([])
       setStatus('running')
@@ -344,14 +339,14 @@ export default function LectureView() {
         return { id, totalMs: total }
       })
       const presentIds = snapshot.filter(s => (s.totalMs ?? 0) > 0).map(s => s.id)
-      if (lid) sessionAttendanceRef.current[String(lid)] = new Set(presentIds)
+      if (lid !== null) sessionAttendanceRef.current[lid] = new Set(presentIds)
       if (frameWsRef.current) { frameWsRef.current.close(); frameWsRef.current = null }
       if (eventsWsRef.current) {
-        if (lid) sendUnsubscribe(lid)
+        if (lid !== null) sendUnsubscribe(lid)
         eventsWsRef.current.close()
         eventsWsRef.current = null
       }
-      if (lid) { await endLectureFrame(String(lid), { if_unused: false, if_empty: false }); currentLectureId.current = null }
+      if (lid !== null) { await endLectureFrame(lid, { if_unused: false, if_empty: false }); currentLectureId.current = null }
     } catch (err) {}
     finally {
       setStatus('stopped')
@@ -363,14 +358,14 @@ export default function LectureView() {
   }
 
   const onSelectLecture = (val: string) => {
-    const id = val ? parseInt(val) : ''
+    const id = val ? parseInt(val, 10) : ''
     const prev = currentLectureId.current
-    setSelectedLectureId(id)
-    if (eventsWsRef.current && prev) {
-      try { sendUnsubscribe(String(prev)) } catch {}
+    setSelectedLectureId(id === '' ? '' : id)
+    if (eventsWsRef.current && prev !== null) {
+      try { sendUnsubscribe(prev) } catch {}
     }
-    if (eventsWsRef.current && id) {
-      try { eventsWsRef.current.send({ action: 'subscribe', lecture_id: String(id) }) } catch {}
+    if (eventsWsRef.current && id !== '') {
+      try { eventsWsRef.current.send({ action: 'subscribe', lecture_id: id as number }) } catch {}
     }
   }
 
@@ -503,7 +498,7 @@ export default function LectureView() {
                   >
                     <option value="">Выберите предмет</option>
                     {availableSubjects.map(subj => (
-                      <option key={subj.id} value={subj.id}>{subj.name}</option>
+                      <option key={subj.id} value={subj.id.toString()}>{subj.name}</option>
                     ))}
                   </select>
                 </div>
