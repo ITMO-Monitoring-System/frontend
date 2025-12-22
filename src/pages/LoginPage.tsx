@@ -7,20 +7,17 @@ import './login.css'
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [loading, setLoading] = useState(false)
   const { login, setUser } = useContext(AuthContext)
   const nav = useNavigate()
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
-    setLoading(true)
 
     if (email === 'teacher' && password === 'teacher') {
       const fakeToken = 'teacher-token'
       login(fakeToken)
       setUser({ id: 'teacher', name: 'Преподаватель', email: 'teacher', role: 'teacher' })
-      nav('/teacher')
-      setLoading(false)
+      nav('/')
       return
     }
 
@@ -29,7 +26,6 @@ export default function LoginPage() {
       login(fakeToken)
       setUser({ id: 'admin', name: 'Администратор', email: 'admin', role: 'admin' })
       nav('/admin')
-      setLoading(false)
       return
     }
 
@@ -37,33 +33,25 @@ export default function LoginPage() {
       const fakeToken = 'student-token'
       login(fakeToken)
       setUser({ id: 'student', name: 'Студент', email: 'student', role: 'student' })
-      nav('/student')
-      setLoading(false)
+      nav('/')
       return
     }
 
     try {
       const res = await apiLogin(email, password)
-      const token = res?.data?.token
+      const token = res.data.token
       if (!token) throw new Error('No token')
       login(token)
       try {
         const meRes = await apiMe()
-        const u = meRes.data
-        setUser(u)
-        if (u.role === 'admin') nav('/admin')
-        else if (u.role === 'teacher') nav('/teacher')
-        else if (u.role === 'student') nav('/student')
-        else nav('/')
+        setUser(meRes.data)
       } catch {
         setUser({ id: email, name: email, email, role: 'student' })
-        nav('/student')
       }
+      nav('/')
     } catch (err) {
       alert('Login failed')
       console.error(err)
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -75,7 +63,7 @@ export default function LoginPage() {
           <input className="input" placeholder="Логин" value={email} onChange={e => setEmail(e.target.value)} />
           <input className="input" placeholder="Пароль" type="password" value={password} onChange={e => setPassword(e.target.value)} />
           <div className="login-form-row">
-            <button className="btn primary" type="submit" disabled={loading}>{loading ? 'Вход…' : 'Войти'}</button>
+            <button className="btn primary" type="submit">Войти</button>
           </div>
         </form>
         <div className="login-info">
