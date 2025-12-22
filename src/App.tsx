@@ -22,7 +22,7 @@ function Root() {
   const { user } = useContext(AuthContext)
   if (!user) return null
   if (user.role === 'teacher') return <LectureView />
-  if (user.role === 'teacher') return <AdminPanel />
+  if (user.role === 'admin') return <AdminPanel />
   return <StudentProfile />
 }
 
