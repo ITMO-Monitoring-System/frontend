@@ -177,7 +177,7 @@ export const uploadFaces = (
   formData.append('right_face', files.right)
   formData.append('center_face', files.center)
 
-  return api.post(`/upload/faces/${encodeURIComponent(isu)}`, formData, {
+  return api.post(`/api/user/upload/faces/${encodeURIComponent(isu)}`, formData, {
     headers: {
       'Accept': 'application/json',
     },
