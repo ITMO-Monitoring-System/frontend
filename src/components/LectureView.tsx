@@ -148,10 +148,9 @@ export default function LectureView() {
 
   const loadSubjectsAndGroups = async () => {
     try {
-      const [subjectsRes, groupsRes] = await Promise.all([
-        api.get('/api/subjects'),
-        api.get('/groups')
-      ])
+      const subjectsRes = await api.get('/api/subjects')
+      const groupsRes = await api.get('/groups')
+      
       setAvailableSubjects(subjectsRes.data || [])
       setAvailableGroups(groupsRes.data || [])
     } catch (err) {
