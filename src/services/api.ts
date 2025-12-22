@@ -165,15 +165,26 @@ export const getSubjectByName = (name: string) =>
 export const getSubjectById = (id: number) =>
   api.get<Subject>(`/api/subjects/${encodeURIComponent(String(id))}`)
 
-export const uploadFacesMultipart = (isu: string, files: { left_face: File | Blob; right_face: File | Blob; center_face: File | Blob }) => {
+export const uploadFaces = (
+  isu: string,
+  files: {
+    left: File
+    right: File
+    center: File
+  }
+) => {
   const fd = new FormData()
-  fd.append('left_face', files.left_face)
-  fd.append('right_face', files.right_face)
-  fd.append('center_face', files.center_face)
-  return api.post<string>(`/upload/faces/${encodeURIComponent(isu)}`, fd, {
-    headers: { 'Accept': 'application/json' },
+  fd.append('left_face', files.left)
+  fd.append('right_face', files.right)
+  fd.append('center_face', files.center)
+
+  return api.post(`/upload/faces/${encodeURIComponent(isu)}`, fd, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
   })
 }
+
 
 export const listFaces = (userIdOrIsu: string) =>
   api.get<Face[]>(`/users/${encodeURIComponent(userIdOrIsu)}/faces`)
