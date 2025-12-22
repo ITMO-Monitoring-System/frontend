@@ -1,117 +1,210 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { uploadFaces } from '../services/api'
+import type { AxiosProgressEvent } from 'axios'
 import './student-profile.css'
 
 type Slot = 'left' | 'center' | 'right'
 
-export default function StudentProfile() {
+export default function StudentFacesUpload() {
   const [isu, setIsu] = useState('')
   const [files, setFiles] = useState<Partial<Record<Slot, File>>>({})
-  const [loading, setLoading] = useState(false)
+  const [previews, setPreviews] = useState<Partial<Record<Slot, string>>>({})
+  const [uploading, setUploading] = useState(false)
+  const [progress, setProgress] = useState<number>(0)
 
-  const onFile = (slot: Slot, file?: File) => {
+  // Очистка URL preview при размонтировании
+  useEffect(() => {
+    return () => {
+      Object.values(previews).forEach(url => {
+        if (url) URL.revokeObjectURL(url)
+      })
+    }
+  }, [previews])
+
+  const onSelect = (slot: Slot, file: File | null) => {
     if (!file) return
-    if (!file.type.startsWith('image/')) {
-      alert('Можно загружать только изображения')
+    
+    const maxMb = 8
+    if (file.size > maxMb * 1024 * 1024) {
+      alert(`Файл слишком большой (максимум ${maxMb} МБ)`)
       return
     }
+
+    // Создаем preview
+    const previewUrl = URL.createObjectURL(file)
+    
+    // Очищаем старый preview, если был
+    if (previews[slot]) {
+      URL.revokeObjectURL(previews[slot]!)
+    }
+
     setFiles(prev => ({ ...prev, [slot]: file }))
+    setPreviews(prev => ({ ...prev, [slot]: previewUrl }))
   }
 
-  const submit = async () => {
-    if (!isu) {
-      alert('Введите ИСУ')
+  const removeSlot = (slot: Slot) => {
+    if (previews[slot]) {
+      URL.revokeObjectURL(previews[slot]!)
+    }
+    
+    setFiles(prev => {
+      const newFiles = { ...prev }
+      delete newFiles[slot]
+      return newFiles
+    })
+    
+    setPreviews(prev => {
+      const newPreviews = { ...prev }
+      delete newPreviews[slot]
+      return newPreviews
+    })
+  }
+
+  const canUploadAll = () => {
+    return isu.trim().length > 0 && files.left && files.center && files.right
+  }
+
+  const handleUpload = async () => {
+    if (!isu.trim()) {
+      alert('Введите ISU студента')
       return
     }
-
+    
     if (!files.left || !files.center || !files.right) {
-      alert('Нужно загрузить 3 фотографии')
+      alert('Выберите все три фотографии: левая, фронтальная и правая')
       return
     }
 
-    setLoading(true)
+    setUploading(true)
+    setProgress(0)
+
     try {
       await uploadFaces(isu, {
         left: files.left,
-        center: files.center,
         right: files.right,
+        center: files.center
+      }, (ev: AxiosProgressEvent) => {
+        const loaded = ev.loaded ?? 0
+        const total = ev.total ?? 0
+        const pct = total > 0 ? Math.round((loaded / total) * 100) : 0
+        setProgress(pct)
       })
+
       alert('Фотографии успешно загружены')
+      
+      // Сбрасываем состояние
+      Object.values(previews).forEach(url => {
+        if (url) URL.revokeObjectURL(url)
+      })
+      
       setFiles({})
-    } catch {
-      alert('Ошибка при загрузке фотографий')
+      setPreviews({})
+      setIsu('')
+      setProgress(0)
+      
+    } catch (err: any) {
+      console.error('Ошибка загрузки фотографий:', err)
+      
+      let errorMessage = 'Ошибка загрузки фотографий'
+      if (err.response?.data?.error) {
+        errorMessage += `: ${err.response.data.error}`
+      } else if (err.message) {
+        errorMessage += `: ${err.message}`
+      }
+      
+      alert(errorMessage)
     } finally {
-      setLoading(false)
+      setUploading(false)
     }
   }
 
-
   return (
-    <div className="faces-card">
-      <h3>Загрузка фотографий лица</h3>
-
-      <label className="label">ИСУ студента</label>
-      <input
-        className="input"
-        value={isu}
-        onChange={e => setIsu(e.target.value)}
-        placeholder="например 123456"
-      />
-
-      <div className="faces-row">
-        <FaceInput
-          label="Левая"
-          file={files.left}
-          onChange={f => onFile('left', f)}
-        />
-        <FaceInput
-          label="Фронтальная"
-          file={files.center}
-          onChange={f => onFile('center', f)}
-        />
-        <FaceInput
-          label="Правая"
-          file={files.right}
-          onChange={f => onFile('right', f)}
-        />
+    <div className="faces-card lowered">
+      <div className="faces-header">
+        <h3 className="faces-title">Загрузить фотографии по ISU</h3>
+        <div className="faces-sub">Загрузите 3 фото: левая, фронтальная, правая</div>
       </div>
 
-      <button
-        className="btn primary"
-        onClick={submit}
-        disabled={loading}
-      >
-        {loading ? 'Загрузка…' : 'Отправить'}
-      </button>
-    </div>
-  )
-}
+      <div className="faces-body">
+        <label className="field-label">ISU студента</label>
+        <input
+          className="input"
+          value={isu}
+          onChange={e => setIsu(e.target.value.replace(/\D/g, ''))}
+          placeholder="Введите ISU (только цифры)"
+          disabled={uploading}
+        />
 
-function FaceInput({
-  label,
-  file,
-  onChange,
-}: {
-  label: string
-  file?: File
-  onChange: (file?: File) => void
-}) {
-  return (
-    <label className="face-box">
-      <input
-        type="file"
-        accept="image/*"
-        onChange={e => onChange(e.target.files?.[0])}
-      />
-
-      {file ? (
-        <img src={URL.createObjectURL(file)} className="face-img" />
-      ) : (
-        <div className="face-placeholder">
-          <div className="face-plus">+</div>
-          <div className="face-label">{label}</div>
+        <div className="slots-row">
+          {(['left', 'center', 'right'] as Slot[]).map((slot) => (
+            <div className="slot" key={slot}>
+              <div className="slot-label">
+                {slot === 'left' && 'Левая'}
+                {slot === 'center' && 'Фронтальная'}
+                {slot === 'right' && 'Правая'}
+              </div>
+              <div className="slot-thumb">
+                {files[slot] ? (
+                  <div className="thumb">
+                    <img 
+                      src={previews[slot]} 
+                      alt={slot}
+                      className="thumb-img" 
+                    />
+                    <button 
+                      className="thumb-remove" 
+                      onClick={() => removeSlot(slot)}
+                      disabled={uploading}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ) : (
+                  <label className="upload-box">
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      onChange={e => onSelect(slot, e.target.files?.[0] || null)}
+                      disabled={uploading}
+                      style={{ display: 'none' }}
+                    />
+                    <div className="upload-inner">
+                      <div className="upload-plus">+</div>
+                      <div className="upload-text">
+                        {slot === 'left' && 'Левая'}
+                        {slot === 'center' && 'Фронт'}
+                        {slot === 'right' && 'Правая'}
+                      </div>
+                    </div>
+                  </label>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
-      )}
-    </label>
+
+        {uploading && (
+          <div className="progress-row">
+            <div className="progress-bar">
+              <div 
+                className="progress-fill" 
+                style={{ width: `${progress}%` }} 
+              />
+            </div>
+            <div className="progress-label">{progress}%</div>
+          </div>
+        )}
+
+        <div className="actions-row">
+          <button 
+            className="btn primary" 
+            onClick={handleUpload} 
+            disabled={!canUploadAll() || uploading}
+          >
+            {uploading ? 'Загрузка…' : 'Загрузить фотографии'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }

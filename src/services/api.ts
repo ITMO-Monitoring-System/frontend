@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios, { type AxiosProgressEvent } from 'axios'
 import { AuthTokenStorage } from './authToken'
 import type { Department, Face, Group, Lecture, Practice, Subject, User } from '../types'
 
@@ -168,17 +168,21 @@ export const uploadFaces = (
     left: File
     right: File
     center: File
-  }
+  },
+  onUploadProgress?: (progressEvent: AxiosProgressEvent) => void
 ) => {
-  const fd = new FormData()
-  fd.append('left_face', files.left)
-  fd.append('right_face', files.right)
-  fd.append('center_face', files.center)
+  const formData = new FormData()
+  
+  formData.append('left_face', files.left)
+  formData.append('right_face', files.right)
+  formData.append('center_face', files.center)
 
-  return api.post(`/upload/faces/${encodeURIComponent(isu)}`, fd, {
+  return api.post(`/upload/faces/${encodeURIComponent(isu)}`, formData, {
     headers: {
-      'Content-Type': 'multipart/form-data',
+      'Accept': 'application/json',
     },
+    onUploadProgress,
+    timeout: 30000, 
   })
 }
 
