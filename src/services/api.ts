@@ -2,7 +2,7 @@ import axios from 'axios'
 import { AuthTokenStorage } from './authToken'
 import type { Department, Face, Group, Lecture, Practice, Subject, User } from '../types'
 
-const API_BASE = import.meta.env.VITE_API_BASE
+const API_BASE = 'http://89.111.170.130:8080'
 const api = axios.create({ baseURL: API_BASE })
 
 api.interceptors.request.use((cfg: any) => {
