@@ -31,13 +31,13 @@ api.interceptors.request.use((cfg: any) => {
   return cfg
 })
 
-const startLectureFrame = async (lectureId?: string, body: any = { durable: true, auto_delete: false }) => {
-  const lid = lectureId ?? `lec-${Date.now()}`
-  return frameApi.post(`/api/lectures/${encodeURIComponent(lid)}/start`, body)
+const startLectureFrame = async (lectureId?: number, body: any = { durable: true, auto_delete: false }) => {
+  const lid = lectureId ?? Date.now()
+  return frameApi.post(`/api/lectures/${encodeURIComponent(String(lid))}/start`, body)
 }
 
-const endLectureFrame = async (lectureId: string, body: any = { if_unused: false, if_empty: false }) => {
-  return frameApi.post(`/api/lectures/${encodeURIComponent(lectureId)}/end`, body)
+const endLectureFrame = async (lectureId: number, body: any = { if_unused: false, if_empty: false }) => {
+  return frameApi.post(`/api/lectures/${encodeURIComponent(String(lectureId))}/end`, body)
 }
 
 function fmtMs(ms: number) {
@@ -63,15 +63,15 @@ export default function LectureView() {
   const imgRef = useRef<HTMLImageElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const frameWsRef = useRef<WsService | null>(null)
-  const eventsWsRef = useRef<WsService | null>(null)
+  const eventsSocketRef = useRef<WebSocket | null>(null)
   const lastObjectUrl = useRef<string | null>(null)
 
   const [imageSrc, setImageSrc] = useState<string | null>(null)
   const [detections, setDetections] = useState<Detection[]>([])
   const [attendance, setAttendance] = useState<Record<string, { id: string; name?: string; present: boolean; presentSince: number | null; totalMs: number }>>({})
   const [status, setStatus] = useState<'idle'|'starting'|'running'|'error'|'stopped'>('idle')
-  const currentLectureId = useRef<string | null>(null)
-  const sessionAttendanceRef = useRef<Record<string, Set<string>>>({})
+  const currentLectureId = useRef<number | null>(null)
+  const sessionAttendanceRef = useRef<Record<number, Set<string>>>({})
   const usersByIdRef = useRef<Record<string, string>>({})
 
   const [lectures, setLectures] = useState<Lecture[]>([])
@@ -84,11 +84,15 @@ export default function LectureView() {
   const [availableSubjects, setAvailableSubjects] = useState<Array<{id: number, name: string}>>([])
   const [availableGroups, setAvailableGroups] = useState<Array<{code: string, name?: string}>>([])
 
+  const subscriptionsRef = useRef<Set<number>>(new Set())
+  const reconnectTimerRef = useRef<number | null>(null)
+
   useEffect(() => {
     return () => {
       if (frameWsRef.current) { frameWsRef.current.close(); frameWsRef.current = null }
-      if (eventsWsRef.current) { eventsWsRef.current.close(); eventsWsRef.current = null }
+      if (eventsSocketRef.current) { try { eventsSocketRef.current.close() } catch {} ; eventsSocketRef.current = null }
       if (lastObjectUrl.current) { try { URL.revokeObjectURL(lastObjectUrl.current) } catch {} ; lastObjectUrl.current = null }
+      if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current)
     }
   }, [])
 
@@ -134,26 +138,29 @@ export default function LectureView() {
 
   const loadTeacherLectures = async () => {
     const teacherIsu = (user && (user.isu ?? user.id ?? (user.login as any) ?? '')) as string
-    if (!teacherIsu) {
-      return
-    }
+    if (!teacherIsu) return
+    const now = new Date()
+    const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7).toISOString()
+    const to = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString()
     try {
-      const response = await api.get(`/api/teachers/466777/lectures`, {
+      const response = await api.get(`/api/teachers/${encodeURIComponent(teacherIsu)}/lectures`, {
+        params: { from, to }
       })
       setLectures(response.data || [])
-    } catch (err) {
+    } catch {
       setLectures([])
     }
   }
 
   const loadSubjectsAndGroups = async () => {
     try {
-      const subjectsRes = await api.get('/api/subjects')
-      const groupsRes = await api.get('/groups')
-      
+      const [subjectsRes, groupsRes] = await Promise.all([
+        api.get('/api/subjects'),
+        api.get('/api/groups')
+      ])
       setAvailableSubjects(subjectsRes.data || [])
       setAvailableGroups(groupsRes.data || [])
-    } catch (err) {
+    } catch {
       setAvailableSubjects([])
       setAvailableGroups([])
     }
@@ -161,25 +168,13 @@ export default function LectureView() {
 
   const createLectureOrPractice = async () => {
     const teacherIsu = (user && (user.isu ?? user.id ?? (user.login as any) ?? '')) as string
-    if (!teacherIsu) {
-      alert('ISU преподавателя неизвестен')
-      return
-    }
-    if (!newLectureDate) {
-      alert('Введите дату')
-      return
-    }
-    if (!newSubjectId) {
-      alert('Выберите предмет')
-      return
-    }
-    if (newGroupIds.length === 0) {
-      alert('Выберите хотя бы одну группу')
-      return
-    }
+    if (!teacherIsu) return
+    if (!newLectureDate) return
+    if (!newSubjectId) return
+    if (newGroupIds.length === 0) return
     const payload = {
       date: newLectureDate,
-      subject_id: parseInt(newSubjectId),
+      subject_id: parseInt(newSubjectId, 10),
       group_ids: newGroupIds,
       teacher_id: teacherIsu
     }
@@ -248,31 +243,43 @@ export default function LectureView() {
     }
   }
 
-  const handleEventsWs = (msg: any) => {
-    if (!msg) return
-    if (typeof msg === 'string') {
-      try {
-        const parsed = JSON.parse(msg)
-        if (parsed && Array.isArray(parsed.detections)) {
-          processDetections(parsed.detections)
+  const handleEventsRaw = async (raw: any) => {
+    try {
+      if (typeof raw === 'string') {
+        const parsed = JSON.parse(raw)
+        if (!parsed) return
+        if (Array.isArray(parsed)) {
+          processDetections(parsed as Detection[])
           return
         }
-      } catch {}
-      return
-    }
-    if (msg.type === 'detections' && Array.isArray(msg.detections)) {
-      processDetections(msg.detections)
-      return
-    }
-    if (msg.detections && Array.isArray(msg.detections)) {
-      processDetections(msg.detections)
+        if (parsed.detections && Array.isArray(parsed.detections)) {
+          processDetections(parsed.detections as Detection[])
+          return
+        }
+        if (parsed.type === 'detections' && Array.isArray(parsed.detections)) {
+          processDetections(parsed.detections as Detection[])
+          return
+        }
+        return
+      } else if (raw instanceof ArrayBuffer) {
+        const text = new TextDecoder().decode(raw)
+        await handleEventsRaw(text)
+        return
+      } else if (raw instanceof Blob) {
+        const text = await raw.text()
+        await handleEventsRaw(text)
+        return
+      } else {
+        return
+      }
+    } catch (e) {
       return
     }
   }
 
-  const connectFrameWsForLecture = (lectureId: string) => {
+  const connectFrameWsForLecture = (lectureId: number) => {
     if (frameWsRef.current) { frameWsRef.current.close(); frameWsRef.current = null }
-    const wsUrl = `${FRAME_WS_BASE}/ws/stream?lecture_id=${encodeURIComponent(lectureId)}`
+    const wsUrl = `${FRAME_WS_BASE}/ws/stream?lecture_id=${encodeURIComponent(String(lectureId))}`
     const ws = new WsService(wsUrl)
     ws.addHandler(handleFrameWs)
     ws.connect(token ?? undefined)
@@ -280,50 +287,75 @@ export default function LectureView() {
   }
 
   const connectEventsWs = () => {
-    if (eventsWsRef.current) return eventsWsRef.current
-    const wsUrl = `${EVENTS_WS_BASE}/api/ws`
-    const ws = new WsService(wsUrl)
-    ws.addHandler(handleEventsWs)
-    ws.connect()
-    eventsWsRef.current = ws
-    return ws
-  }
+    if (eventsSocketRef.current && eventsSocketRef.current.readyState === WebSocket.OPEN) return eventsSocketRef.current
+    if (eventsSocketRef.current && (eventsSocketRef.current.readyState === WebSocket.CONNECTING)) return eventsSocketRef.current
 
-  const sendSubscribe = (lectureId: string) => {
-    const ws = connectEventsWs()
-    const onOpen = (m: any) => {
-      if (m && m.type === 'open') {
-        ws.send({ action: 'subscribe', lecture_id: lectureId })
-      }
-    }
-    ws.addHandler(onOpen)
-    if ((ws as any).isOpen) {
-      ws.send({ action: 'subscribe', lecture_id: lectureId })
-    }
-  }
-
-  const sendUnsubscribe = (lectureId: string) => {
-    if (!eventsWsRef.current) return
     try {
-      eventsWsRef.current.send({ action: 'unsubscribe', lecture_id: lectureId })
-    } catch {}
+      const wsUrl = `${EVENTS_WS_BASE}/api/ws`
+      const socket = new WebSocket(wsUrl)
+      eventsSocketRef.current = socket
+
+      socket.onopen = () => {
+        subscriptionsRef.current.forEach(id => {
+          socket.send(JSON.stringify({ action: 'subscribe', lecture_id: id }))
+        })
+      }
+
+      socket.onmessage = (ev: MessageEvent) => {
+        handleEventsRaw(ev.data)
+      }
+
+      socket.onerror = () => {}
+
+      socket.onclose = (ev) => {
+        eventsSocketRef.current = null
+        if (ev.code !== 1000) {
+          if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current)
+          reconnectTimerRef.current = window.setTimeout(() => {
+            connectEventsWs()
+          }, 2000)
+        }
+      }
+
+      return socket
+    } catch (e) {
+      return null
+    }
+  }
+
+  const sendSubscribe = (lectureId: number) => {
+    subscriptionsRef.current.add(lectureId)
+    const socket = connectEventsWs()
+    if (!socket) return
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ action: 'subscribe', lecture_id: lectureId }))
+    }
+  }
+
+  const sendUnsubscribe = (lectureId: number) => {
+    subscriptionsRef.current.delete(lectureId)
+    const socket = eventsSocketRef.current
+    if (!socket || socket.readyState !== WebSocket.OPEN) return
+    socket.send(JSON.stringify({ action: 'unsubscribe', lecture_id: lectureId }))
   }
 
   const startSession = async () => {
     try {
       setStatus('starting')
-      let lectureId: string
-      if (selectedLectureId) {
-        lectureId = selectedLectureId.toString()
+      let lectureId: number
+      if (selectedLectureId !== '') {
+        lectureId = selectedLectureId as number
       } else {
-        lectureId = `lec-${Date.now()}`
+        lectureId = Date.now()
       }
       const res = await startLectureFrame(lectureId, { durable: true, auto_delete: false })
-      const returnedId = res?.data?.lecture_id ?? res?.data?.lectureId ?? lectureId
-      currentLectureId.current = String(returnedId)
-      connectFrameWsForLecture(String(returnedId))
+      const returnedRaw = res?.data?.lecture_id ?? res?.data?.lectureId ?? lectureId
+      const returnedNum = Number(returnedRaw)
+      const finalId = Number.isFinite(returnedNum) ? returnedNum : lectureId
+      currentLectureId.current = finalId
+      connectFrameWsForLecture(finalId)
       connectEventsWs()
-      sendSubscribe(String(returnedId))
+      sendSubscribe(finalId)
       setAttendance({})
       setDetections([])
       setStatus('running')
@@ -343,15 +375,15 @@ export default function LectureView() {
         return { id, totalMs: total }
       })
       const presentIds = snapshot.filter(s => (s.totalMs ?? 0) > 0).map(s => s.id)
-      if (lid) sessionAttendanceRef.current[String(lid)] = new Set(presentIds)
+      if (lid !== null) sessionAttendanceRef.current[lid] = new Set(presentIds)
       if (frameWsRef.current) { frameWsRef.current.close(); frameWsRef.current = null }
-      if (eventsWsRef.current) {
-        if (lid) sendUnsubscribe(lid)
-        eventsWsRef.current.close()
-        eventsWsRef.current = null
+      if (eventsSocketRef.current) {
+        if (lid !== null) sendUnsubscribe(lid)
+        try { eventsSocketRef.current.close() } catch {}
+        eventsSocketRef.current = null
       }
-      if (lid) { await endLectureFrame(String(lid), { if_unused: false, if_empty: false }); currentLectureId.current = null }
-    } catch (err) {}
+      if (lid !== null) { await endLectureFrame(lid, { if_unused: false, if_empty: false }); currentLectureId.current = null }
+    } catch {}
     finally {
       setStatus('stopped')
       setDetections([])
@@ -362,14 +394,14 @@ export default function LectureView() {
   }
 
   const onSelectLecture = (val: string) => {
-    const id = val ? parseInt(val) : ''
+    const id = val ? parseInt(val, 10) : ''
     const prev = currentLectureId.current
-    setSelectedLectureId(id)
-    if (eventsWsRef.current && prev) {
-      try { sendUnsubscribe(String(prev)) } catch {}
+    setSelectedLectureId(id === '' ? '' : id)
+    if (eventsSocketRef.current && prev !== null) {
+      try { sendUnsubscribe(prev) } catch {}
     }
-    if (eventsWsRef.current && id) {
-      try { eventsWsRef.current.send({ action: 'subscribe', lecture_id: String(id) }) } catch {}
+    if (eventsSocketRef.current && id !== '') {
+      try { eventsSocketRef.current.send(JSON.stringify({ action: 'subscribe', lecture_id: id })) } catch {}
     }
   }
 
@@ -502,7 +534,7 @@ export default function LectureView() {
                   >
                     <option value="">Выберите предмет</option>
                     {availableSubjects.map(subj => (
-                      <option key={subj.id} value={subj.id}>{subj.name}</option>
+                      <option key={subj.id} value={subj.id.toString()}>{subj.name}</option>
                     ))}
                   </select>
                 </div>
