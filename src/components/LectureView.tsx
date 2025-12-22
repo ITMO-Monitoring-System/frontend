@@ -10,7 +10,7 @@ import { AuthTokenStorage } from '../services/authToken'
 const FRAME_WS_BASE = 'ws://89.111.170.130:8000'
 const FRAME_API_BASE = 'http://89.111.170.130:8000'
 const API_BASE = 'http://89.111.170.130:8080'
-const EVENTS_WS_BASE = import.meta.env.VITE_WS_EVENTS ?? 'ws://89.111.170.130:8000'
+const EVENTS_WS_BASE = import.meta.env.VITE_WS_EVENTS ?? API_BASE.replace(/^http/, 'ws')
 
 const frameApi = axios.create({ baseURL: FRAME_API_BASE })
 frameApi.interceptors.request.use((cfg: any) => {
@@ -127,10 +127,14 @@ export default function LectureView() {
     })
   }, [imageSrc, detections])
 
+  useEffect(() => {
+    if (!user) return
+    loadTeacherLectures()
+  }, [user])
+
   const loadTeacherLectures = async () => {
     const teacherIsu = (user && (user.isu ?? user.id ?? (user.login as any) ?? '')) as string
     if (!teacherIsu) {
-      alert('ISU преподавателя неизвестен')
       return
     }
     const now = new Date()
@@ -142,7 +146,7 @@ export default function LectureView() {
       })
       setLectures(response.data || [])
     } catch (err) {
-      alert('Не удалось загрузить лекции')
+      setLectures([])
     }
   }
 
@@ -150,11 +154,14 @@ export default function LectureView() {
     try {
       const [subjectsRes, groupsRes] = await Promise.all([
         api.get('/api/subjects'),
-        api.get('/api/groups')
+        api.get('/groups')
       ])
       setAvailableSubjects(subjectsRes.data || [])
       setAvailableGroups(groupsRes.data || [])
-    } catch (err) {}
+    } catch (err) {
+      setAvailableSubjects([])
+      setAvailableGroups([])
+    }
   }
 
   const createLectureOrPractice = async () => {
@@ -277,19 +284,34 @@ export default function LectureView() {
     frameWsRef.current = ws
   }
 
-  const connectEventsWsAndSubscribe = (lectureId: string) => {
-    if (eventsWsRef.current) { eventsWsRef.current.close(); eventsWsRef.current = null }
+  const connectEventsWs = () => {
+    if (eventsWsRef.current) return eventsWsRef.current
     const wsUrl = `${EVENTS_WS_BASE}/api/ws`
     const ws = new WsService(wsUrl)
     ws.addHandler(handleEventsWs)
     ws.connect(token ?? undefined)
     eventsWsRef.current = ws
+    return ws
+  }
+
+  const sendSubscribe = (lectureId: string) => {
+    const ws = connectEventsWs()
     const onOpen = (m: any) => {
       if (m && m.type === 'open') {
         ws.send({ action: 'subscribe', lecture_id: lectureId })
       }
     }
     ws.addHandler(onOpen)
+    if ((ws as any).isOpen) {
+      ws.send({ action: 'subscribe', lecture_id: lectureId })
+    }
+  }
+
+  const sendUnsubscribe = (lectureId: string) => {
+    if (!eventsWsRef.current) return
+    try {
+      eventsWsRef.current.send({ action: 'unsubscribe', lecture_id: lectureId })
+    } catch {}
   }
 
   const startSession = async () => {
@@ -305,7 +327,8 @@ export default function LectureView() {
       const returnedId = res?.data?.lecture_id ?? res?.data?.lectureId ?? lectureId
       currentLectureId.current = String(returnedId)
       connectFrameWsForLecture(String(returnedId))
-      connectEventsWsAndSubscribe(String(returnedId))
+      connectEventsWs()
+      sendSubscribe(String(returnedId))
       setAttendance({})
       setDetections([])
       setStatus('running')
@@ -328,7 +351,7 @@ export default function LectureView() {
       if (lid) sessionAttendanceRef.current[String(lid)] = new Set(presentIds)
       if (frameWsRef.current) { frameWsRef.current.close(); frameWsRef.current = null }
       if (eventsWsRef.current) {
-        eventsWsRef.current.send({ action: 'unsubscribe', lecture_id: lid })
+        if (lid) sendUnsubscribe(lid)
         eventsWsRef.current.close()
         eventsWsRef.current = null
       }
@@ -340,6 +363,18 @@ export default function LectureView() {
       setAttendance({})
       if (lastObjectUrl.current) { try { URL.revokeObjectURL(lastObjectUrl.current) } catch {} ; lastObjectUrl.current = null }
       setImageSrc(null)
+    }
+  }
+
+  const onSelectLecture = (val: string) => {
+    const id = val ? parseInt(val) : ''
+    const prev = currentLectureId.current
+    setSelectedLectureId(id)
+    if (eventsWsRef.current && prev) {
+      try { sendUnsubscribe(String(prev)) } catch {}
+    }
+    if (eventsWsRef.current && id) {
+      try { eventsWsRef.current.send({ action: 'subscribe', lecture_id: String(id) }) } catch {}
     }
   }
 
@@ -370,29 +405,26 @@ export default function LectureView() {
                 <div className="teacher-value">{teacherIsuDisplay || '—'}</div>
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn" onClick={loadTeacherLectures}>Загрузить мои лекции</button>
                 <button className="btn" onClick={() => { setIsPractice(false); setShowCreateModal(true); loadSubjectsAndGroups() }}>Создать лекцию</button>
                 <button className="btn" onClick={() => { setIsPractice(true); setShowCreateModal(true); loadSubjectsAndGroups() }}>Создать практику</button>
               </div>
             </div>
 
-            {lectures.length > 0 && (
-              <div className="lectures-list">
-                <label>Выберите лекцию:</label>
-                <select
-                  className="lecture-select"
-                  value={selectedLectureId}
-                  onChange={e => setSelectedLectureId(e.target.value ? parseInt(e.target.value) : '')}
-                >
-                  <option value="">-- новая лекция --</option>
-                  {lectures.map(lec => (
-                    <option key={lec.id} value={lec.id}>
-                      {new Date(lec.date).toLocaleString()} (ID: {lec.id})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+            <div className="lectures-list">
+              <label>Лекции</label>
+              <select
+                className="lecture-select"
+                value={selectedLectureId}
+                onChange={e => onSelectLecture(e.target.value)}
+              >
+                <option value="">-- выберите лекцию --</option>
+                {lectures.map(lec => (
+                  <option key={lec.id} value={lec.id}>
+                    {new Date(lec.date).toLocaleString()} (ID: {lec.id})
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div className="lecture-actions unified">
