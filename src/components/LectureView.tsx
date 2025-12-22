@@ -1,14 +1,32 @@
 import { useEffect, useRef, useState, useContext } from 'react'
 import { WsService } from '../services/ws'
 import { AuthContext } from '../contexts/AuthContext'
-import { startLecture, endLecture } from '../services/api'
 import type { Detection } from '../types'
 import { exportAttendanceToXlsx, exportSessionsToXlsx } from '../utils/exportXlsx'
 import GroupSelector from './GroupSelector'
 import './lecture.css'
+import axios from 'axios'
+import { AuthTokenStorage } from '../services/authToken'
 
 const FRAME_WS_BASE = import.meta.env.VITE_WS_BASE
 const EVENTS_WS_BASE = import.meta.env.VITE_WS_EVENTS
+
+const api = axios.create({ baseURL: FRAME_WS_BASE })
+
+api.interceptors.request.use((cfg: any) => {
+  const token = AuthTokenStorage.get()
+  if (token) cfg.headers = { ...(cfg.headers || {}), Authorization: `Bearer ${token}` }
+  return cfg
+})
+
+ const startLecture = async (lectureId?: string, body: any = { durable: true, auto_delete: false }) => {
+  const lid = lectureId ?? `lec-${Date.now()}`
+  return api.post(`/api/lectures/${encodeURIComponent(lid)}/start`, body)
+}
+
+ const endLecture = async (lectureId: string, body: any = { if_unused: false, if_empty: false }) => {
+  return api.post(`/api/lectures/${encodeURIComponent(lectureId)}/end`, body)
+}
 
 function fmtMs(ms: number) {
   if (!ms || ms <= 0) return '0s'
