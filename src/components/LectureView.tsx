@@ -138,7 +138,7 @@ export default function LectureView() {
       return
     }
     try {
-      const response = await api.get(`/api/teachers/${encodeURIComponent(teacherIsu)}/lectures`, {
+      const response = await api.get(`/api/teachers/466777/lectures`, {
       })
       setLectures(response.data || [])
     } catch (err) {
