@@ -15,6 +15,11 @@ const api = axios.create({ baseURL: FRAME_WS_BASE })
 api.interceptors.request.use((cfg: any) => {
   const token = AuthTokenStorage.get()
   if (token) cfg.headers = { ...(cfg.headers || {}), Authorization: `Bearer ${token}` }
+  if (cfg.data instanceof FormData) {
+    if (cfg.headers) {
+      delete cfg.headers['Content-Type']
+    }
+  }
   return cfg
 })
 
@@ -46,7 +51,7 @@ type Lecture = {
 }
 
 export default function LectureView() {
-  const { token } = useContext(AuthContext)
+  const { token, user } = useContext(AuthContext)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const frameWsRef = useRef<WsService | null>(null)
@@ -60,8 +65,7 @@ export default function LectureView() {
   const currentLectureId = useRef<string | null>(null)
   const sessionAttendanceRef = useRef<Record<string, Set<string>>>({})
   const usersByIdRef = useRef<Record<string, string>>({})
-  
-  const [teacherIsu, setTeacherIsu] = useState('')
+
   const [lectures, setLectures] = useState<Lecture[]>([])
   const [selectedLectureId, setSelectedLectureId] = useState<number | ''>('')
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -116,22 +120,20 @@ export default function LectureView() {
   }, [imageSrc, detections])
 
   const loadTeacherLectures = async () => {
-    if (!teacherIsu.trim()) {
-      alert('Введите ISU преподавателя')
+    const teacherIsu = (user && (user.isu ?? user.id ?? (user.login as any) ?? '')) as string
+    if (!teacherIsu) {
+      alert('ISU преподавателя неизвестен')
       return
     }
-    
     const now = new Date()
     const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7).toISOString()
     const to = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString()
-    
     try {
       const response = await api.get(`/api/teachers/${encodeURIComponent(teacherIsu)}/lectures`, {
         params: { from, to }
       })
       setLectures(response.data || [])
     } catch (err: any) {
-      console.error('Ошибка загрузки лекций:', err)
       alert('Не удалось загрузить лекции')
     }
   }
@@ -144,14 +146,13 @@ export default function LectureView() {
       ])
       setAvailableSubjects(subjectsRes.data || [])
       setAvailableGroups(groupsRes.data || [])
-    } catch (err) {
-      console.error('Ошибка загрузки данных:', err)
-    }
+    } catch (err) {}
   }
 
   const createLectureOrPractice = async () => {
-    if (!teacherIsu.trim()) {
-      alert('Введите ISU преподавателя')
+    const teacherIsu = (user && (user.isu ?? user.id ?? (user.login as any) ?? '')) as string
+    if (!teacherIsu) {
+      alert('ISU преподавателя неизвестен')
       return
     }
     if (!newLectureDate) {
@@ -166,25 +167,21 @@ export default function LectureView() {
       alert('Выберите хотя бы одну группу')
       return
     }
-
     const payload = {
       date: newLectureDate,
       subject_id: parseInt(newSubjectId),
       group_ids: newGroupIds,
       teacher_id: teacherIsu
     }
-
     try {
       const endpoint = isPractice ? '/api/practices' : '/api/lectures'
       await api.post(endpoint, payload)
-      alert(isPractice ? 'Практика создана' : 'Лекция создана')
       setShowCreateModal(false)
       setNewLectureDate('')
       setNewSubjectId('')
       setNewGroupIds([])
       loadTeacherLectures()
     } catch (err: any) {
-      console.error('Ошибка создания:', err)
       alert(`Ошибка: ${err.response?.data?.error || err.message}`)
     }
   }
@@ -291,13 +288,11 @@ export default function LectureView() {
     try {
       setStatus('starting')
       let lectureId: string
-      
       if (selectedLectureId) {
         lectureId = selectedLectureId.toString()
       } else {
         lectureId = `lec-${Date.now()}`
       }
-      
       const res = await startLecture(lectureId, { durable: true, auto_delete: false })
       const returnedId = res?.data?.lecture_id ?? res?.data?.lectureId ?? lectureId
       currentLectureId.current = String(returnedId)
@@ -330,9 +325,8 @@ export default function LectureView() {
         eventsWsRef.current = null
       }
       if (lid) { await endLecture(String(lid), { if_unused: false, if_empty: false }); currentLectureId.current = null }
-    } catch (err) {
-      console.warn('stopSession error', err)
-    } finally {
+    } catch (err) {}
+    finally {
       setStatus('stopped')
       setDetections([])
       setAttendance({})
@@ -355,27 +349,29 @@ export default function LectureView() {
     exportSessionsToXlsx(sessionAttendanceRef.current, usersByIdRef.current, 'attendance_by_lecture.csv')
   }
 
+  const teacherIsuDisplay = (user && (user.isu ?? user.id ?? (user.login as any) ?? '')) as string
+
   return (
     <div className="lecture-page layout-wide">
       <div className="lecture-left">
         <div className="lecture-top-row">
           <div className="lecture-selector">
             <div className="selector-row">
-              <input
-                className="isu-input"
-                placeholder="ISU преподавателя"
-                value={teacherIsu}
-                onChange={e => setTeacherIsu(e.target.value.replace(/\D/g, ''))}
-              />
-              <button className="btn" onClick={loadTeacherLectures}>Загрузить лекции</button>
-              <button className="btn" onClick={() => { setIsPractice(false); setShowCreateModal(true); loadSubjectsAndGroups() }}>Создать лекцию</button>
-              <button className="btn" onClick={() => { setIsPractice(true); setShowCreateModal(true); loadSubjectsAndGroups() }}>Создать практику</button>
+              <div className="teacher-badge">
+                <div className="teacher-label">Мой ISU</div>
+                <div className="teacher-value">{teacherIsuDisplay || '—'}</div>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn" onClick={loadTeacherLectures}>Загрузить мои лекции</button>
+                <button className="btn" onClick={() => { setIsPractice(false); setShowCreateModal(true); loadSubjectsAndGroups() }}>Создать лекцию</button>
+                <button className="btn" onClick={() => { setIsPractice(true); setShowCreateModal(true); loadSubjectsAndGroups() }}>Создать практику</button>
+              </div>
             </div>
-            
+
             {lectures.length > 0 && (
               <div className="lectures-list">
                 <label>Выберите лекцию:</label>
-                <select 
+                <select
                   className="lecture-select"
                   value={selectedLectureId}
                   onChange={e => setSelectedLectureId(e.target.value ? parseInt(e.target.value) : '')}
@@ -383,14 +379,14 @@ export default function LectureView() {
                   <option value="">-- новая лекция --</option>
                   {lectures.map(lec => (
                     <option key={lec.id} value={lec.id}>
-                      {new Date(lec.date).toLocaleDateString()} (ID: {lec.id})
+                      {new Date(lec.date).toLocaleString()} (ID: {lec.id})
                     </option>
                   ))}
                 </select>
               </div>
             )}
           </div>
-          
+
           <div className="lecture-actions unified">
             {status !== 'running' ? (
               <button className="btn primary" onClick={startSession}>Начать лекцию</button>
@@ -449,53 +445,54 @@ export default function LectureView() {
               <h3>{isPractice ? 'Создать практику' : 'Создать лекцию'}</h3>
               <button className="modal-close" onClick={() => setShowCreateModal(false)}>×</button>
             </div>
-            
+
             <div className="modal-body">
-              <div className="form-group">
-                <label>Дата и время:</label>
-                <input
-                  type="datetime-local"
-                  className="form-input"
-                  value={newLectureDate}
-                  onChange={e => setNewLectureDate(e.target.value)}
-                />
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Дата и время</label>
+                  <input
+                    type="datetime-local"
+                    className="form-input"
+                    value={newLectureDate}
+                    onChange={e => setNewLectureDate(e.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Предмет</label>
+                  <select
+                    className="form-input"
+                    value={newSubjectId}
+                    onChange={e => setNewSubjectId(e.target.value)}
+                  >
+                    <option value="">Выберите предмет</option>
+                    {availableSubjects.map(subj => (
+                      <option key={subj.id} value={subj.id}>{subj.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group groups-multi">
+                  <label>Группы</label>
+                  <select
+                    className="form-input"
+                    multiple
+                    value={newGroupIds}
+                    onChange={e => {
+                      const selected = Array.from(e.target.selectedOptions, option => option.value)
+                      setNewGroupIds(selected)
+                    }}
+                  >
+                    {availableGroups.map(group => (
+                      <option key={group.code} value={group.code}>
+                        {group.name || group.code}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="form-hint">Удерживайте Ctrl / Cmd для выбора нескольких</div>
+                </div>
               </div>
-              
-              <div className="form-group">
-                <label>Предмет:</label>
-                <select
-                  className="form-input"
-                  value={newSubjectId}
-                  onChange={e => setNewSubjectId(e.target.value)}
-                >
-                  <option value="">Выберите предмет</option>
-                  {availableSubjects.map(subj => (
-                    <option key={subj.id} value={subj.id}>{subj.name}</option>
-                  ))}
-                </select>
-              </div>
-              
-              <div className="form-group">
-                <label>Группы:</label>
-                <select
-                  className="form-input"
-                  multiple
-                  value={newGroupIds}
-                  onChange={e => {
-                    const selected = Array.from(e.target.selectedOptions, option => option.value)
-                    setNewGroupIds(selected)
-                  }}
-                  style={{ height: '120px' }}
-                >
-                  {availableGroups.map(group => (
-                    <option key={group.code} value={group.code}>
-                      {group.name || group.code}
-                    </option>
-                  ))}
-                </select>
-                <div className="form-hint">Удерживайте Ctrl для выбора нескольких групп</div>
-              </div>
-              
+
               <div className="modal-actions">
                 <button className="btn" onClick={() => setShowCreateModal(false)}>Отмена</button>
                 <button className="btn primary" onClick={createLectureOrPractice}>Создать</button>
