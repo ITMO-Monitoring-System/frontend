@@ -1,21 +1,30 @@
-import { useContext, useEffect, useState } from 'react'
+import { useContext, useEffect, useState, useRef } from 'react'
 import { AuthContext } from '../contexts/AuthContext'
-import { updateProfile, uploadFace, getMyAttendance } from '../services/api'
+import type { AxiosProgressEvent } from 'axios'
+import { updateProfile, getMyAttendance } from '../services/api'
+import api from '../services/api'
 import type { User } from '../types'
 import './student-profile.css'
+
+type Slot = 'left' | 'center' | 'right'
+type FileWithPreview = { file: File; preview: string }
 
 export default function StudentProfile() {
   const { user, setUser } = useContext(AuthContext)
   const [profile, setProfile] = useState<Partial<User>>({})
-  const [photos, setPhotos] = useState<string[]>([])
+  const [files, setFiles] = useState<Partial<Record<Slot, FileWithPreview>>>({})
   const [attendance, setAttendance] = useState<{ attended: number; total: number } | null>(null)
   const [loading, setLoading] = useState(false)
-  const [uploadingIndex, setUploadingIndex] = useState<number | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<Record<Slot, number>>({ left: 0, center: 0, right: 0 })
+  const previewsRef = useRef<string[]>([])
 
   useEffect(() => {
     if (!user) return
     setProfile({ name: user.name, email: user.email, groups: user.groups })
-    if (user.photos) setPhotos(user.photos.slice(0, 3))
+    if (user.photos) {
+      // ignore legacy base64 / photos field — we will show uploaded previews only
+    }
     ;(async () => {
       try {
         const res = await getMyAttendance()
@@ -26,32 +35,34 @@ export default function StudentProfile() {
     })()
   }, [user])
 
-  const onFile = (file?: File) => {
-    if (!file) return
-    if (photos.length >= 3) {
-      alert('Можно загрузить до 3 фото')
-      return
+  useEffect(() => {
+    return () => {
+      previewsRef.current.forEach(url => URL.revokeObjectURL(url))
+      previewsRef.current = []
     }
-    const maxMb = 5
+  }, [])
+
+  const onSelectFile = (slot: Slot, file?: File) => {
+    if (!file) return
+    const maxMb = 8
     if (file.size > maxMb * 1024 * 1024) {
       alert(`Файл слишком большой (макс ${maxMb} МБ)`)
       return
     }
-    const reader = new FileReader()
-    reader.onload = () => {
-      const res = reader.result
-      if (typeof res === 'string') {
-        setPhotos(prev => [...prev, res])
-      }
-    }
-    reader.onerror = () => {
-      alert('Ошибка чтения файла')
-    }
-    reader.readAsDataURL(file)
+    const preview = URL.createObjectURL(file)
+    previewsRef.current.push(preview)
+    setFiles(prev => ({ ...prev, [slot]: { file, preview } }))
   }
 
-  const removePhoto = (idx: number) => {
-    setPhotos(prev => prev.filter((_, i) => i !== idx))
+  const removeFile = (slot: Slot) => {
+    setFiles(prev => {
+      const cp = { ...prev }
+      if (cp[slot]) {
+        try { URL.revokeObjectURL(cp[slot]!.preview) } catch {}
+      }
+      delete cp[slot]
+      return cp
+    })
   }
 
   const save = async () => {
@@ -64,25 +75,40 @@ export default function StudentProfile() {
         groups: profile.groups,
       }
       await updateProfile(user.id, payload)
-      for (let i = 0; i < photos.slice(0, 3).length; i++) {
-        const p = photos[i]
-        if (typeof p === 'string' && p.startsWith('data:')) {
-          try {
-            setUploadingIndex(i)
-            await uploadFace(user.id, p)
-          } catch {
-            console.warn('uploadFace failed for one photo')
-          } finally {
-            setUploadingIndex(null)
+      if (Object.keys(files).length > 0) {
+        setUploading(true)
+        setUploadProgress({ left: 0, center: 0, right: 0 })
+        const fd = new FormData()
+        if (files.left) fd.append('left_face', files.left.file)
+        if (files.right) fd.append('right_face', files.right.file)
+        if (files.center) fd.append('center_face', files.center.file)
+        await api.post(`/upload/faces/${encodeURIComponent(user.id)}`, fd, {
+          headers: { 'Accept': 'application/json' },
+          onUploadProgress: (progressEvent: AxiosProgressEvent) => {
+            if (!progressEvent.total) return
+            const percent = Math.round((progressEvent.loaded / progressEvent.total) * 100)
+
+            const newProg: Record<Slot, number> = { left: 0, center: 0, right: 0 }
+            ;(Object.keys(files) as Slot[]).forEach(s => {
+              newProg[s] = percent
+            })
+
+            setUploadProgress(prev => ({ ...prev, ...newProg }))
           }
-        }
+          ,
+        })
+        setUploading(false)
+        setFiles({})
       }
-      setUser({ ...(user as User), ...payload, photos })
+      const newUser = { ...(user as User), ...payload }
+      if (setUser) setUser(newUser)
       alert('Сохранено')
-    } catch {
-      alert('Ошибка при сохранении')
+    } catch (err) {
+      console.error(err)
+      alert('Ошибка при сохранении / загрузке фотографий')
     } finally {
-      setUploadingIndex(null)
+      setUploadProgress({ left: 0, center: 0, right: 0 })
+      setUploading(false)
       setLoading(false)
     }
   }
@@ -90,7 +116,7 @@ export default function StudentProfile() {
   if (!user) return null
 
   return (
-    <div className="profile-card">
+    <div className="profile-card lowered">
       <div className="profile-header">
         <div>
           <h3 className="profile-title">Профиль</h3>
@@ -115,29 +141,76 @@ export default function StudentProfile() {
         <label className="field-label">Группа</label>
         <input className="input" value={(profile.groups && profile.groups[0]) || ''} onChange={e => setProfile(s => ({ ...s, groups: [e.target.value] }))} />
 
-        <label className="field-label">Фото лица (до 3)</label>
-        <div className="photos-row">
-          {photos.map((p, i) => (
-            <div className="thumb" key={i}>
-              <img src={p} alt={`face-${i}`} className="thumb-img" />
-              <button className="thumb-remove" onClick={() => removePhoto(i)}>×</button>
-              {uploadingIndex === i && <div className="thumb-badge">Загрузка…</div>}
+        <label className="field-label">Фото лица</label>
+        <div className="faces-grid">
+          <div className="face-slot">
+            <div className="slot-label">Левый</div>
+            <div className="thumb-wrap">
+              {files.left ? (
+                <div className="thumb">
+                  <img src={files.left.preview} alt="left" className="thumb-img" />
+                  <button className="thumb-remove" onClick={() => removeFile('left')}>×</button>
+                  {uploading && <div className="thumb-badge small">Загрузка {uploadProgress.left}%</div>}
+                </div>
+              ) : (
+                <label className="upload-box small">
+                  <input type="file" accept="image/*" onChange={e => e.target.files && onSelectFile('left', e.target.files[0])} />
+                  <div className="upload-inner small">
+                    <div className="upload-plus">+</div>
+                    <div className="upload-text small">Левая сторона</div>
+                  </div>
+                </label>
+              )}
             </div>
-          ))}
+          </div>
 
-          {photos.length < 3 && (
-            <label className="upload-box">
-              <input type="file" accept="image/*" onChange={e => e.target.files && onFile(e.target.files[0])} />
-              <div className="upload-inner">
-                <div className="upload-plus">+</div>
-                <div className="upload-text">Загрузить фото</div>
-              </div>
-            </label>
-          )}
+          <div className="face-slot">
+            <div className="slot-label">Фронтальная</div>
+            <div className="thumb-wrap">
+              {files.center ? (
+                <div className="thumb">
+                  <img src={files.center.preview} alt="center" className="thumb-img" />
+                  <button className="thumb-remove" onClick={() => removeFile('center')}>×</button>
+                  {uploading && <div className="thumb-badge small">Загрузка {uploadProgress.center}%</div>}
+                </div>
+              ) : (
+                <label className="upload-box small">
+                  <input type="file" accept="image/*" onChange={e => e.target.files && onSelectFile('center', e.target.files[0])} />
+                  <div className="upload-inner small">
+                    <div className="upload-plus">+</div>
+                    <div className="upload-text small">Фронт</div>
+                  </div>
+                </label>
+              )}
+            </div>
+          </div>
+
+          <div className="face-slot">
+            <div className="slot-label">Правый</div>
+            <div className="thumb-wrap">
+              {files.right ? (
+                <div className="thumb">
+                  <img src={files.right.preview} alt="right" className="thumb-img" />
+                  <button className="thumb-remove" onClick={() => removeFile('right')}>×</button>
+                  {uploading && <div className="thumb-badge small">Загрузка {uploadProgress.right}%</div>}
+                </div>
+              ) : (
+                <label className="upload-box small">
+                  <input type="file" accept="image/*" onChange={e => e.target.files && onSelectFile('right', e.target.files[0])} />
+                  <div className="upload-inner small">
+                    <div className="upload-plus">+</div>
+                    <div className="upload-text small">Правая сторона</div>
+                  </div>
+                </label>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="actions-row">
-          <button className="btn primary" onClick={save} disabled={loading}>{loading ? 'Сохранение…' : 'Сохранить'}</button>
+          <button className="btn primary" onClick={save} disabled={loading || uploading}>
+            {loading || uploading ? 'Загрузка…' : 'Сохранить'}
+          </button>
         </div>
       </div>
     </div>
