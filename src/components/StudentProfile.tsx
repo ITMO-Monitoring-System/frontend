@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import api from '../services/api'
 import type { AxiosProgressEvent } from 'axios'
-import './student-faces.css'
+import './student-profile.css'
 
 type Slot = 'left' | 'center' | 'right'
 type FileWithPreview = { file: File; preview: string }
