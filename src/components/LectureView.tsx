@@ -7,12 +7,13 @@ import './lecture.css'
 import axios from 'axios'
 import { AuthTokenStorage } from '../services/authToken'
 
-const FRAME_WS_BASE = import.meta.env.VITE_WS_BASE
-const EVENTS_WS_BASE = import.meta.env.VITE_WS_EVENTS
+const FRAME_WS_BASE = 'ws://89.111.170.130:8000'
+const FRAME_API_BASE = 'http://89.111.170.130:8000'
+const API_BASE = 'http://89.111.170.130:8080'
+const EVENTS_WS_BASE = import.meta.env.VITE_WS_EVENTS ?? 'ws://89.111.170.130:8000'
 
-const api = axios.create({ baseURL: FRAME_WS_BASE })
-
-api.interceptors.request.use((cfg: any) => {
+const frameApi = axios.create({ baseURL: FRAME_API_BASE })
+frameApi.interceptors.request.use((cfg: any) => {
   const token = AuthTokenStorage.get()
   if (token) cfg.headers = { ...(cfg.headers || {}), Authorization: `Bearer ${token}` }
   if (cfg.data instanceof FormData) {
@@ -23,13 +24,20 @@ api.interceptors.request.use((cfg: any) => {
   return cfg
 })
 
-const startLecture = async (lectureId?: string, body: any = { durable: true, auto_delete: false }) => {
+const api = axios.create({ baseURL: API_BASE })
+api.interceptors.request.use((cfg: any) => {
+  const token = AuthTokenStorage.get()
+  if (token) cfg.headers = { ...(cfg.headers || {}), Authorization: `Bearer ${token}` }
+  return cfg
+})
+
+const startLectureFrame = async (lectureId?: string, body: any = { durable: true, auto_delete: false }) => {
   const lid = lectureId ?? `lec-${Date.now()}`
-  return api.post(`/api/lectures/${encodeURIComponent(lid)}/start`, body)
+  return frameApi.post(`/api/lectures/${encodeURIComponent(lid)}/start`, body)
 }
 
-const endLecture = async (lectureId: string, body: any = { if_unused: false, if_empty: false }) => {
-  return api.post(`/api/lectures/${encodeURIComponent(lectureId)}/end`, body)
+const endLectureFrame = async (lectureId: string, body: any = { if_unused: false, if_empty: false }) => {
+  return frameApi.post(`/api/lectures/${encodeURIComponent(lectureId)}/end`, body)
 }
 
 function fmtMs(ms: number) {
@@ -133,7 +141,7 @@ export default function LectureView() {
         params: { from, to }
       })
       setLectures(response.data || [])
-    } catch (err: any) {
+    } catch (err) {
       alert('Не удалось загрузить лекции')
     }
   }
@@ -293,7 +301,7 @@ export default function LectureView() {
       } else {
         lectureId = `lec-${Date.now()}`
       }
-      const res = await startLecture(lectureId, { durable: true, auto_delete: false })
+      const res = await startLectureFrame(lectureId, { durable: true, auto_delete: false })
       const returnedId = res?.data?.lecture_id ?? res?.data?.lectureId ?? lectureId
       currentLectureId.current = String(returnedId)
       connectFrameWsForLecture(String(returnedId))
@@ -324,7 +332,7 @@ export default function LectureView() {
         eventsWsRef.current.close()
         eventsWsRef.current = null
       }
-      if (lid) { await endLecture(String(lid), { if_unused: false, if_empty: false }); currentLectureId.current = null }
+      if (lid) { await endLectureFrame(String(lid), { if_unused: false, if_empty: false }); currentLectureId.current = null }
     } catch (err) {}
     finally {
       setStatus('stopped')
