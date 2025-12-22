@@ -39,6 +39,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return
       }
 
+      if (token === 'student-token') {
+        if (mounted) {
+          setUser({ id: 'student', name: 'Student', email: 'student', role: 'student' } as User)
+          setLoading(false)
+        }
+        return
+      }
+
       try {
         const r = await me()
         if (!mounted) return
