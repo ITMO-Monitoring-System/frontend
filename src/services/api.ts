@@ -177,12 +177,20 @@ export const uploadFaces = (
   formData.append('right_face', files.right)
   formData.append('center_face', files.center)
 
+  console.log('Отправка файлов на сервер...', {
+    isu,
+    url: `/api/user/upload/faces/${encodeURIComponent(isu)}`,
+    totalSize: `${(files.left.size + files.center.size + files.right.size) / 1024} KB`
+  })
+
   return api.post(`/api/user/upload/faces/${encodeURIComponent(isu)}`, formData, {
     headers: {
       'Accept': 'application/json',
     },
     onUploadProgress,
-    timeout: 3000000, 
+    timeout: 120000,
+    maxContentLength: Infinity,
+    maxBodyLength: Infinity,
   })
 }
 
