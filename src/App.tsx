@@ -7,6 +7,7 @@ import LectureView from './components/LectureView'
 import StudentProfile from './components/StudentProfile'
 import HeaderBar from './components/HeaderBar'
 import './components/header-bar.css'
+import AdminPanel from './pages/AdminPanel'
 
 const RequireAuth: React.FC<{ children: JSX.Element }> = ({ children }) => {
   const ctx = useContext(AuthContext)
@@ -21,6 +22,7 @@ function Root() {
   const { user } = useContext(AuthContext)
   if (!user) return null
   if (user.role === 'teacher') return <LectureView />
+  if (user.role === 'teacher') return <AdminPanel />
   return <StudentProfile />
 }
 

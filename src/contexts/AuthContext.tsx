@@ -23,9 +23,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Special local token for test admin (offline)
+      if (token === 'teacher-token') {
+        if (mounted) {
+          setUser({ id: 'teacher', name: 'Teacher', email: 'teacher', role: 'teacher' } as User)
+          setLoading(false)
+        }
+        return
+      }
+
       if (token === 'admin-token') {
         if (mounted) {
-          setUser({ id: 'admin', name: 'Admin', email: 'admin', role: 'teacher' } as User)
+          setUser({ id: 'admin', name: 'Admin', email: 'admin', role: 'admin' } as User)
           setLoading(false)
         }
         return

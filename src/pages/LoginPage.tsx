@@ -15,7 +15,14 @@ export default function LoginPage() {
 
     if (email === 'admin' && password === 'admin') {
       login('admin-token')
-      setUser({ id: 'admin', name: 'Admin', email: 'admin', role: 'teacher' })
+      setUser({ id: 'admin', name: 'Admin', email: 'admin', role: 'admin' })
+      nav('/')
+      return
+    }
+
+    if (email === 'teacher' && password === 'teacher') {
+      login('teacher-token')
+      setUser({ id: 'teacher', name: 'Teacher', email: 'teacher', role: 'teacher' })
       nav('/')
       return
     }
