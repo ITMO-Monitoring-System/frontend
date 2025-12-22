@@ -137,12 +137,8 @@ export default function LectureView() {
     if (!teacherIsu) {
       return
     }
-    const now = new Date()
-    const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7).toISOString()
-    const to = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString()
     try {
       const response = await api.get(`/api/teachers/${encodeURIComponent(teacherIsu)}/lectures`, {
-        params: { from, to }
       })
       setLectures(response.data || [])
     } catch (err) {
