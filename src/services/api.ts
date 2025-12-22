@@ -182,7 +182,7 @@ export const uploadFaces = (
       'Accept': 'application/json',
     },
     onUploadProgress,
-    timeout: 30000, 
+    timeout: 300000, 
   })
 }
 
