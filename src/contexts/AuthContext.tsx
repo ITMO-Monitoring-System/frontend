@@ -19,26 +19,40 @@ export const AuthContext = createContext<AuthContextType>({
 })
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'))
+  const [token, setToken] = useState<string | null>(() => {
+    try { return localStorage.getItem('token') } catch { return null }
+  })
   const [user, setUserState] = useState<User | null>(() => {
-    const raw = localStorage.getItem('user')
-    return raw ? JSON.parse(raw) : null
+    try {
+      const raw = localStorage.getItem('user')
+      return raw ? JSON.parse(raw) : null
+    } catch {
+      return null
+    }
   })
 
   useEffect(() => {
-    if (token) localStorage.setItem('token', token)
-    else localStorage.removeItem('token')
+    try {
+      if (token) localStorage.setItem('token', token)
+      else localStorage.removeItem('token')
+    } catch {}
   }, [token])
 
   useEffect(() => {
-    if (user) localStorage.setItem('user', JSON.stringify(user))
-    else localStorage.removeItem('user')
+    try {
+      if (user) localStorage.setItem('user', JSON.stringify(user))
+      else localStorage.removeItem('user')
+    } catch {}
   }, [user])
 
   const login = (t: string) => setToken(t)
   const logout = () => {
     setToken(null)
     setUserState(null)
+    try {
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+    } catch {}
   }
   const setUser = (u: User | null) => setUserState(u)
 
