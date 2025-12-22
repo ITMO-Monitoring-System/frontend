@@ -27,5 +27,45 @@ export interface DetectionsMessage {
   ts?: string;
 }
 
+export type Department = {
+  id: number
+  code: string
+  alias?: string
+  name: string
+}
+
+export type Group = {
+  code: string
+  department_id?: number
+  name?: string
+}
+
+export type Lecture = {
+  id: number
+  date: string
+  subject_id?: number
+  teacher_id?: string
+  group_ids?: string[]
+}
+
+export type Practice = {
+  id: number
+  date: string
+  subject_id?: number
+  teacher_id?: string
+  group_ids?: string[]
+}
+
+export type Subject = {
+  id: number
+  name: string
+}
+
+export type Face = {
+  id: string
+  user_id?: string
+  created_at?: string
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type WsMessage = FrameMessage | DetectionsMessage | any;

@@ -1,7 +1,24 @@
-.admin-page{padding:20px}
+.admin-page{padding:20px;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial}
 .admin-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
-.admin-main{display:flex;gap:16px}
-.admin-card{background:#fff;padding:16px;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,0.06);width:480px}
+.admin-main{display:flex;gap:16px;flex-wrap:wrap}
+.admin-card{background:#fff;padding:16px;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,0.06);width:480px;box-sizing:border-box}
+.admin-card.wide{width:980px}
 .admin-card h3{margin:0 0 12px 0}
 .admin-form{display:flex;flex-direction:column;gap:8px}
-.admin-form input,.admin-form select{padding:8px;border-radius:8px;border:1px solid #e6e9ef}
+.admin-form input,.admin-form select{padding:8px;border-radius:8px;border:1px solid #e6e9ef;outline:none}
+.admin-form input:focus,.admin-form select:focus{box-shadow:0 0 0 3px rgba(66,153,225,0.08);border-color:#4c9aff}
+.actions{display:flex;gap:8px;margin-top:12px}
+.btn{padding:8px 12px;border-radius:8px;border:1px solid transparent;background:#f3f4f6;cursor:pointer}
+.btn.primary{background:#2563eb;color:#fff;border-color:transparent}
+.btn.danger{background:#ef4444;color:#fff}
+.btn.small{padding:6px 8px;font-size:13px;border-radius:6px}
+.no-access{padding:20px}
+.bind-row{display:flex;gap:16px}
+.bind-col{flex:1;display:flex;flex-direction:column}
+.students-list{margin-top:8px;max-height:240px;overflow:auto;border:1px solid #eef2f7;padding:8px;border-radius:8px;background:#fbfdff}
+.student-row{display:flex;justify-content:space-between;align-items:center;padding:8px;border-bottom:1px dashed #eef2f7}
+.student-row:last-child{border-bottom:none}
+.student-isu{font-weight:600}
+.muted{color:#6b7280;font-size:14px;padding:8px}
+.list.small{list-style:none;padding:0;margin:8px 0 0 0;max-height:140px;overflow:auto}
+.list.small li{padding:6px 0;border-bottom:1px solid #f1f5f9}
