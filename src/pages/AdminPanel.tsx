@@ -5,8 +5,7 @@ import {
   listDepartments,
   listGroupsByDepartment,
   createSubject,
-  addUserToGroup,
-  removeUserFromGroup,
+  setStudentGroup,  // Изменили название функции
   removeStudentGroup,
   listStudentsByGroup,
   listSubjects,
@@ -113,7 +112,11 @@ export default function AdminPanel() {
     }
     setBusy(true)
     try {
-      await addUserToGroup(bindGroup, bindIsu)
+      // Используем setStudentGroup с правильным форматом тела
+      await setStudentGroup(bindIsu, {
+        group_code: bindGroup,
+        user_id: bindIsu
+      })
       const r = await listStudentsByGroup(bindGroup)
       setStudentsInGroup(r.data.user_ids || [])
       setBindIsu('')
@@ -134,11 +137,8 @@ export default function AdminPanel() {
     }
     setBusy(true)
     try {
-      if (bindGroup) {
-        await removeUserFromGroup(bindGroup, isuToRemove)
-      } else {
-        await removeStudentGroup(isuToRemove)
-      }
+      // Просто удаляем привязку студента к группе
+      await removeStudentGroup(isuToRemove)
       if (bindGroup) {
         const r = await listStudentsByGroup(bindGroup)
         setStudentsInGroup(r.data.user_ids || [])

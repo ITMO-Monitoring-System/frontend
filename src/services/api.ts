@@ -68,9 +68,6 @@ export const listGroups = async () => {
   return api.get('/groups')
 }
 
-export const addUserToGroup = (groupId: string, isu: string) =>
-  api.post(`/api/groups/${encodeURIComponent(groupId)}/addUser`, { isu })
-
 export const removeUserFromGroup = (groupId: string, isu: string) =>
   api.post(`/groups/${encodeURIComponent(groupId)}/removeUser`, { isu })
 
