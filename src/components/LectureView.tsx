@@ -316,7 +316,7 @@ export default function LectureView() {
       eventsSocketRef.current = socket
       socket.onopen = () => {
         subscriptionsRef.current.forEach(id => {
-          socket.send(JSON.stringify({ action: 'subscribe', lecture_id: id.toString }))
+          socket.send(JSON.stringify({ action: 'subscribe', lecture_id: id.toString() }))
         })
       }
       socket.onmessage = (ev: MessageEvent) => {
