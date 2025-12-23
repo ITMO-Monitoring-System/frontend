@@ -39,7 +39,6 @@ export default function CameraSender({
     if (running) {
       restartSending()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fps])
 
   const buildWsUrl = (lectureId: number) => {
@@ -49,8 +48,8 @@ export default function CameraSender({
   }
 
   const openSocketForLecture = (lectureId: number) => {
-    closeSocket()
     try {
+      closeSocket()
       const url = buildWsUrl(lectureId)
       const socket = new WebSocket(url)
       socket.binaryType = 'arraybuffer'
@@ -59,12 +58,8 @@ export default function CameraSender({
         setStatus('idle')
         wsRef.current = null
       }
-      socket.onerror = () => {
-        setStatus('error')
-      }
-      socket.onmessage = () => {
-        // we don't handle incoming here (LectureView already does), keep minimal
-      }
+      socket.onerror = () => setStatus('error')
+      socket.onmessage = () => {}
       wsRef.current = socket
       return socket
     } catch {
@@ -122,22 +117,22 @@ export default function CameraSender({
       setStatus('error')
       return
     }
-    setStatus('idle')
     const socket = openSocketForLecture(lectureId)
     if (!socket) return
-    await (new Promise<void>(resolve => {
-      const t = setTimeout(resolve, 250)
+    await new Promise<void>(resolve => {
+      const to = setTimeout(resolve, 500)
+      const prev = socket.onopen
       socket.onopen = () => {
-        clearTimeout(t)
+        clearTimeout(to)
+        if (typeof prev === 'function') try { prev.call(socket, new Event('open')) } catch {}
         setStatus('connected')
         resolve()
       }
-    }))
+    })
     const tick = Math.max(1, Math.round(1000 / Math.max(1, fps)))
     intervalRef.current = window.setInterval(() => {
       const sLectureId = getLectureId()
       if (!sLectureId) return
-      // if lecture changed, reopen socket for new id
       const currentUrl = (wsRef.current as WebSocket | null)?.url
       const wanted = buildWsUrl(sLectureId)
       if (currentUrl !== wanted) {
@@ -164,6 +159,7 @@ export default function CameraSender({
   }
 
   const handleStartClick = async () => {
+    if (typeof window === 'undefined') return
     if (!activeDeviceId && devices.length > 0) {
       const first = devices[0]
       try { await openDevice(first.deviceId) } catch {}
