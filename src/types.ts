@@ -12,7 +12,7 @@ export interface User {
 export interface Detection {
   id?: string;
   name?: string;
-  bbox?: [number, number, number, number]; // x,y,w,h relative (0..1)
+  bbox?: [number, number, number, number];
   score?: number;
 }
 
@@ -41,11 +41,10 @@ export type Group = {
 }
 
 export type Lecture = {
-  id: number
   date: string
-  subject_id?: number
-  teacher_id?: string
-  group_ids?: string[]
+  id: number
+  subject_id: number
+  teacher_id: string
 }
 
 export type Practice = {
