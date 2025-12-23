@@ -259,7 +259,7 @@ export default function LectureView() {
           if (!existing) {
             copy[isu] = {
               isu,
-              name: fullName || d.user.name || d.user.last_name,
+              name:  d.user.name,
               last_name: d.user.last_name,
               patronymic: d.user.patronymic,
               present: true,
