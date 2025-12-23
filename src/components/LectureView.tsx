@@ -343,7 +343,7 @@ export default function LectureView() {
     const socket = connectEventsWs()
     if (!socket) return
     if (socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ action: 'subscribe', lecture_id: lectureId }))
+      socket.send(JSON.stringify({ action: 'subscribe', lecture_id: lectureId.toString() }))
     }
   }
 
@@ -351,7 +351,7 @@ export default function LectureView() {
     subscriptionsRef.current.delete(lectureId)
     const socket = eventsSocketRef.current
     if (!socket || socket.readyState !== WebSocket.OPEN) return
-    socket.send(JSON.stringify({ action: 'unsubscribe', lecture_id: lectureId }))
+    socket.send(JSON.stringify({ action: 'unsubscribe', lecture_id: lectureId.toString() }))
   }
 
   const startSession = async () => {
