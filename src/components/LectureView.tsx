@@ -603,7 +603,7 @@ export default function LectureView() {
                 <div className="detected-item" key={a.isu}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                     <div>
-                      <div style={{ fontWeight: 700 }}>{a.last_name ? `${a.last_name} ${a.name ?? ''}` : (a.name ?? a.isu)}</div>
+                      <div style={{ fontWeight: 700 }}>{a.name ?? a.isu}</div>
                       <div style={{ color: '#6b7280' }}>{a.patronymic ? `${a.patronymic}` : ''}</div>
                       <div style={{ color: '#374151', marginTop: 6 }}>ISU: {a.isu}</div>
                     </div>
