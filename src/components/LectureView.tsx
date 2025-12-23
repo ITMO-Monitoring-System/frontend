@@ -52,6 +52,16 @@ function fmtMs(ms: number) {
   return `${ss}s`
 }
 
+type AttendanceEntry = {
+  isu: string
+  name?: string
+  last_name?: string
+  patronymic?: string
+  present: boolean
+  presentSince: number | null
+  totalMs: number
+}
+
 export default function LectureView() {
   const { token, user } = useContext(AuthContext)
   const imgRef = useRef<HTMLImageElement | null>(null)
@@ -62,7 +72,7 @@ export default function LectureView() {
 
   const [imageSrc, setImageSrc] = useState<string | null>(null)
   const [detections, setDetections] = useState<Detection[]>([])
-  const [attendance, setAttendance] = useState<Record<string, { id: string; name?: string; present: boolean; presentSince: number | null; totalMs: number }>>({})
+  const [attendance, setAttendance] = useState<Record<string, AttendanceEntry>>({})
   const [status, setStatus] = useState<'idle'|'starting'|'running'|'error'|'stopped'>('idle')
   const currentLectureId = useRef<number | null>(null)
   const sessionAttendanceRef = useRef<Record<number, Set<string>>>({})
@@ -217,37 +227,107 @@ export default function LectureView() {
     }
   }
 
-  const processDetections = (newDetections: Detection[]) => {
+  const handleDetectedArray = (newDetections: Detection[]) => {
     const now = Date.now()
-    const newIds = new Set<string>()
+    const seen = new Set<string>()
     newDetections.forEach(d => {
-      const id = d.id ?? `${d.name ?? 'unknown'}_${Math.round((d.bbox?.[0] ?? 0)*1000)}_${Math.round((d.bbox?.[1] ?? 0)*1000)}`
-      newIds.add(id)
-      if (d.name) usersByIdRef.current[id] = d.name
+      if (d.user && d.user.isu) {
+        const isu = String(d.user.isu)
+        seen.add(isu)
+      } else if (d.id) {
+        seen.add(String(d.id))
+      }
     })
     setAttendance(prev => {
       const copy = { ...prev }
-      Object.keys(copy).forEach(k => {
-        const r = copy[k]
-        if (r.present && !newIds.has(k)) {
-          const since = r.presentSince ?? now
-          const delta = Math.max(0, now - since)
-          copy[k] = { ...r, present: false, presentSince: null, totalMs: (r.totalMs ?? 0) + delta }
+      Object.keys(copy).forEach(key => {
+        if (!seen.has(key)) {
+          const r = copy[key]
+          if (r.present) {
+            const since = r.presentSince ?? now
+            const delta = Math.max(0, now - since)
+            copy[key] = { ...r, present: false, presentSince: null, totalMs: (r.totalMs ?? 0) + delta }
+          }
         }
       })
       newDetections.forEach(d => {
-        const id = d.id ?? `${d.name ?? 'unknown'}_${Math.round((d.bbox?.[0] ?? 0)*1000)}_${Math.round((d.bbox?.[1] ?? 0)*1000)}`
-        const existing = copy[id]
-        if (!existing) {
-          copy[id] = { id, name: d.name, present: true, presentSince: now, totalMs: 0 }
+        if (d.user && d.user.isu) {
+          const isu = String(d.user.isu)
+          const existing = copy[isu]
+          const fullName = `${d.user.last_name ?? ''} ${d.user.name ?? ''}`.trim()
+          if (!existing) {
+            copy[isu] = {
+              isu,
+              name: fullName || d.user.name || d.user.last_name,
+              last_name: d.user.last_name,
+              patronymic: d.user.patronymic,
+              present: true,
+              presentSince: now,
+              totalMs: 0,
+            }
+          } else {
+            if (!existing.present) {
+              copy[isu] = { ...existing, present: true, presentSince: now, name: fullName || existing.name, last_name: d.user.last_name, patronymic: d.user.patronymic }
+            } else {
+              copy[isu] = { ...existing, name: fullName || existing.name, last_name: d.user.last_name ?? existing.last_name, patronymic: d.user.patronymic ?? existing.patronymic }
+            }
+          }
         } else {
-          if (!existing.present) copy[id] = { ...existing, present: true, presentSince: now, name: d.name ?? existing.name }
-          else copy[id] = { ...existing, name: d.name ?? existing.name }
+          const key = d.id ? String(d.id) : `${d.name ?? 'unknown'}_${Math.round((d.bbox?.[0] ?? 0)*1000)}_${Math.round((d.bbox?.[1] ?? 0)*1000)}`
+          const existing = copy[key]
+          if (!existing) {
+            copy[key] = {
+              isu: key,
+              name: d.name,
+              last_name: undefined,
+              patronymic: undefined,
+              present: true,
+              presentSince: now,
+              totalMs: 0,
+            }
+          } else {
+            if (!existing.present) copy[key] = { ...existing, present: true, presentSince: now, name: d.name ?? existing.name }
+            else copy[key] = { ...existing, name: d.name ?? existing.name }
+          }
         }
       })
       return copy
     })
     setDetections(newDetections)
+  }
+
+  const upsertUser = (userObj: any) => {
+    const now = Date.now()
+    if (!userObj) return
+    const isu = String(userObj.isu ?? userObj.id ?? '')
+    if (!isu) return
+    setAttendance(prev => {
+      const copy = { ...prev }
+      const existing = copy[isu]
+      const fullName = `${userObj.last_name ?? ''} ${userObj.name ?? ''}`.trim()
+      if (!existing) {
+        copy[isu] = {
+          isu,
+          name: fullName || userObj.name || userObj.last_name,
+          last_name: userObj.last_name,
+          patronymic: userObj.patronymic,
+          present: true,
+          presentSince: now,
+          totalMs: 0,
+        }
+      } else {
+        if (!existing.present) {
+          copy[isu] = { ...existing, present: true, presentSince: now, name: fullName || existing.name, last_name: userObj.last_name ?? existing.last_name, patronymic: userObj.patronymic ?? existing.patronymic }
+        } else {
+          copy[isu] = { ...existing, name: fullName || existing.name, last_name: userObj.last_name ?? existing.last_name, patronymic: userObj.patronymic ?? existing.patronymic }
+        }
+      }
+      return copy
+    })
+  }
+
+  const processDetections = (newDetections: Detection[]) => {
+    handleDetectedArray(newDetections)
   }
 
   const handleFrameWs = (msg: any) => {
@@ -275,11 +355,23 @@ export default function LectureView() {
         const parsed = JSON.parse(raw)
         if (!parsed) return
         if (Array.isArray(parsed)) {
-          processDetections(parsed as Detection[])
+          handleDetectedArray(parsed as Detection[])
           return
         }
         if (parsed.detections && Array.isArray(parsed.detections)) {
-          processDetections(parsed.detections as Detection[])
+          handleDetectedArray(parsed.detections as Detection[])
+          return
+        }
+        if (parsed.user) {
+          upsertUser(parsed.user)
+          return
+        }
+        if (parsed.type === 'detection' && parsed.user) {
+          upsertUser(parsed.user)
+          return
+        }
+        if (parsed.type === 'detections' && Array.isArray(parsed.detections)) {
+          handleDetectedArray(parsed.detections as Detection[])
           return
         }
         return
@@ -316,7 +408,7 @@ export default function LectureView() {
       eventsSocketRef.current = socket
       socket.onopen = () => {
         subscriptionsRef.current.forEach(id => {
-          socket.send(JSON.stringify({ action: 'subscribe', lecture_id: id.toString() }))
+          socket.send(JSON.stringify({ action: 'subscribe', lecture_id: id }))
         })
       }
       socket.onmessage = (ev: MessageEvent) => {
@@ -343,7 +435,7 @@ export default function LectureView() {
     const socket = connectEventsWs()
     if (!socket) return
     if (socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ action: 'subscribe', lecture_id: lectureId.toString() }))
+      socket.send(JSON.stringify({ action: 'subscribe', lecture_id: lectureId }))
     }
   }
 
@@ -351,7 +443,7 @@ export default function LectureView() {
     subscriptionsRef.current.delete(lectureId)
     const socket = eventsSocketRef.current
     if (!socket || socket.readyState !== WebSocket.OPEN) return
-    socket.send(JSON.stringify({ action: 'unsubscribe', lecture_id: lectureId.toString() }))
+    socket.send(JSON.stringify({ action: 'unsubscribe', lecture_id: lectureId }))
   }
 
   const startSession = async () => {
@@ -426,7 +518,7 @@ export default function LectureView() {
     const arr = Object.values(attendance).map(a => {
       const runningDelta = a.present && a.presentSince ? Math.max(0, now - a.presentSince) : 0
       const total = (a.totalMs ?? 0) + runningDelta
-      return { id: a.id, name: a.name ?? usersByIdRef.current[a.id] ?? a.id, totalMs: total, total: fmtMs(total) }
+      return { id: a.isu, name: a.name ?? a.isu, totalMs: total, total: fmtMs(total) }
     })
     exportAttendanceToXlsx(arr, 'lecture_session.csv')
   }
@@ -449,7 +541,6 @@ export default function LectureView() {
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button className="btn" onClick={() => openCreateModal(false)}>Создать лекцию</button>
-                <button className="btn" onClick={() => openCreateModal(true)}>Создать практику</button>
               </div>
             </div>
 
@@ -508,12 +599,18 @@ export default function LectureView() {
               const runningDelta = a.present && a.presentSince ? (now - a.presentSince) : 0
               const total = (a.totalMs ?? 0) + runningDelta
               return (
-                <div className="detected-item" key={a.id}>
-                  <div className="detected-main">
-                    <div className="detected-name">{a.name ?? a.id}</div>
-                    <div className="detected-time muted">{fmtMs(total)}</div>
+                <div className="detected-item" key={a.isu}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                    <div>
+                      <div style={{ fontWeight: 700 }}>{a.last_name ? `${a.last_name} ${a.name ?? ''}` : (a.name ?? a.isu)}</div>
+                      <div style={{ color: '#6b7280' }}>{a.patronymic ? `${a.patronymic}` : ''}</div>
+                      <div style={{ color: '#374151', marginTop: 6 }}>ISU: {a.isu}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontWeight: 700 }}>{fmtMs(total)}</div>
+                      <div style={{ color: '#6b7280', fontSize: 12 }}>{a.present ? 'в аудитории' : 'не в аудитории'}</div>
+                    </div>
                   </div>
-                  <div className="detected-sub muted">id: {a.id}</div>
                 </div>
               )
             })
