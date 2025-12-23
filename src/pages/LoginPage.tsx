@@ -20,9 +20,9 @@ export default function LoginPage() {
       return
     }
 
-    if (email === 'teacher' && password === 'teacher') {
+    if (email === '466777' && password === 'teacher') {
       login('teacher-token')
-      setUser({ id: 'teacher', name: 'Teacher', email: 'teacher', role: 'teacher' })
+      setUser({ id: '466777', name: 'Teacher', email: 'teacher', role: 'teacher' })
       nav('/')
       return
     }
@@ -54,9 +54,9 @@ export default function LoginPage() {
         <form onSubmit={submit} className="login-form">
           <input
             className="input"
-            placeholder="Email"
+            placeholder="Номер ису"
             value={email}
-            onChange={e => setEmail(e.target.value)}
+            onChange={e => setEmail(e.target.value.replace(/\D/g, ''))}
           />
 
           <input
