@@ -409,7 +409,7 @@ export default function LectureView() {
       eventsSocketRef.current = socket
       socket.onopen = () => {
         subscriptionsRef.current.forEach(id => {
-          socket.send(JSON.stringify({ action: 'subscribe', lecture_id: id }))
+          socket.send(JSON.stringify({ action: 'subscribe', lecture_id: id.toString() }))
         })
       }
       socket.onmessage = (ev: MessageEvent) => {
@@ -436,7 +436,7 @@ export default function LectureView() {
     const socket = connectEventsWs()
     if (!socket) return
     if (socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ action: 'subscribe', lecture_id: lectureId }))
+      socket.send(JSON.stringify({ action: 'subscribe', lecture_id: lectureId.toString() }))
     }
   }
 
@@ -444,7 +444,7 @@ export default function LectureView() {
     subscriptionsRef.current.delete(lectureId)
     const socket = eventsSocketRef.current
     if (!socket || socket.readyState !== WebSocket.OPEN) return
-    socket.send(JSON.stringify({ action: 'unsubscribe', lecture_id: lectureId }))
+    socket.send(JSON.stringify({ action: 'unsubscribe', lecture_id: lectureId.toString() }))
   }
 
   const startSession = async () => {
@@ -509,7 +509,7 @@ export default function LectureView() {
       try { sendUnsubscribe(prev) } catch {}
     }
     if (eventsSocketRef.current && id !== '') {
-      try { eventsSocketRef.current.send(JSON.stringify({ action: 'subscribe', lecture_id: id })) } catch {}
+      try { eventsSocketRef.current.send(JSON.stringify({ action: 'subscribe', lecture_id: id.toString() })) } catch {}
       subscriptionsRef.current.add(id as number)
     }
   }
