@@ -12,8 +12,14 @@ export interface User {
 export interface Detection {
   id?: string;
   name?: string;
-  bbox?: [number, number, number, number];
   score?: number;
+  bbox?: number[];
+  user?: {
+    isu: string;
+    name?: string;
+    last_name?: string;
+    patronymic?: string;
+  };
 }
 
 export interface FrameMessage {
