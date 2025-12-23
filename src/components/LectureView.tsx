@@ -7,6 +7,7 @@ import { exportAttendanceToXlsx, exportSessionsToXlsx } from '../utils/exportXls
 import './lecture.css'
 import axios from 'axios'
 import { AuthTokenStorage } from '../services/authToken'
+import CameraSender from '../components/CameraSender'
 import {
   listDepartments,
   listGroupsByDepartment,
@@ -15,6 +16,7 @@ import {
   createLecture,
   createPractice,
 } from '../services/api'
+
 
 const FRAME_WS_BASE = 'ws://89.111.170.130:8000'
 const FRAME_API_BASE = 'http://89.111.170.130:8000'
@@ -583,6 +585,8 @@ export default function LectureView() {
             <div className="video-placeholder">Нет видео — нажмите «Начать лекцию»</div>
           )}
         </div>
+
+        <CameraSender getLectureId={() => currentLectureId.current} />
       </div>
 
       <aside className="detected-panel">
