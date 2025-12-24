@@ -221,19 +221,6 @@ export default function AdminPanel() {
         </section>
 
         <section className="admin-card">
-          <h3>Добавить роль</h3>
-          <form onSubmit={handleAddRole} className="admin-form">
-            <label>ИСУ</label>
-            <input value={isu} onChange={e => setIsu(e.target.value)} />
-            <label>Роль</label>
-            <input value={role} onChange={e => setRole(e.target.value)} />
-            <div className="actions">
-              <button disabled={busy} className="btn primary" type="submit">Создать предмет</button>
-            </div>
-          </form>
-        </section>
-
-        <section className="admin-card">
           <h3>Привязка студентов к группам</h3>
           <div className="bind-row">
             <div className="bind-col">
@@ -276,6 +263,19 @@ export default function AdminPanel() {
               </div>
             </div>
           </div>
+        </section>
+
+        <section className="admin-card">
+          <h3>Добавить роль</h3>
+          <form onSubmit={handleAddRole} className="admin-form">
+            <label>ИСУ</label>
+            <input value={isu} onChange={e => setIsu(e.target.value)} />
+            <label>Роль</label>
+            <input value={role} onChange={e => setRole(e.target.value)} />
+            <div className="actions">
+              <button disabled={busy} className="btn primary" type="submit">Создать предмет</button>
+            </div>
+          </form>
         </section>
       </main>
     </div>
