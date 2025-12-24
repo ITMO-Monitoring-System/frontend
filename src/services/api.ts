@@ -114,13 +114,6 @@ export const listPracticesByGroup = (code: string, from?: string, to?: string) =
     params: { from, to },
   })
 
-export const createPractice = (payload: {
-  date: string
-  group_ids: string[]
-  subject_id: number
-  teacher_id: string
-}) => api.post<Practice>('/api/practices', payload)
-
 export const getPracticeById = (id: number) =>
   api.get<Practice>(`/api/practices/${encodeURIComponent(String(id))}`)
 

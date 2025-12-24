@@ -12,7 +12,6 @@ import {
   listSubjects,
   listLecturesByTeacher,
   createLecture,
-  createPractice,
 } from '../services/api'
 
 const FRAME_WS_BASE = 'ws://89.111.170.130:8000'
@@ -242,17 +241,13 @@ export default function LectureView() {
       return
     }
     const payload = {
-      date: newLectureDate,
+      date: newLectureDate + ":00Z",
       subject_id: parseInt(newSubjectId, 10),
       group_ids: newGroupIds,
       teacher_id: teacherIsu,
     }
     try {
-      if (isPractice) {
-        await createPractice(payload)
-      } else {
-        await createLecture(payload)
-      }
+      await createLecture(payload)
       setShowCreateModal(false)
       setNewLectureDate('')
       setNewSubjectId('')
