@@ -131,7 +131,7 @@ export default function LectureView() {
       ctx.lineWidth = 2
       ctx.strokeStyle = '#00FF66'
       ctx.strokeRect(x, y, w, h)
-      const label = d.user?.isu ? `${d.user.isu} ${d.user.name ? ` ${d.user.name}` : ''}` : d.name ? `${d.name} ${d.score ? `(${(d.score*100).toFixed(0)}%)` : ''}` : d.id ?? 'unknown'
+      const label = d.user?.isu ? `${d.user.isu}${d.user.name ? ` ${d.user.name}` : ''}` : d.name ? `${d.name}${d.score ? ` (${(d.score*100).toFixed(0)}%)` : ''}` : d.id ?? 'unknown'
       const padding = 6
       const metrics = ctx.measureText(label)
       const lh = 18
@@ -154,15 +154,18 @@ export default function LectureView() {
         const copy = { ...prev }
         Object.keys(copy).forEach(k => {
           const entry = copy[k]
-          const lastSeen = entry.lastSeen || 0
-          if (entry.present && (now - lastSeen) > 40000) {
-            const delta = Math.max(0, lastSeen - (entry.presentSince ?? lastSeen))
-            copy[k] = {
-              ...entry,
-              present: false,
-              presentSince: null,
-              totalMs: (entry.totalMs ?? 0) + delta,
-              status: 'вышел'
+          if (entry.present) {
+            const lastSeen = entry.lastSeen || 0
+            if ((now - lastSeen) > 40000) {
+              const since = entry.presentSince ?? lastSeen
+              const delta = Math.max(0, lastSeen - since)
+              copy[k] = {
+                ...entry,
+                present: false,
+                presentSince: null,
+                totalMs: (entry.totalMs ?? 0) + delta,
+                status: 'вышел'
+              }
             }
           }
         })
@@ -262,17 +265,30 @@ export default function LectureView() {
 
   const handleDetectedArray = (newDetections: Detection[]) => {
     const now = Date.now()
-    const seen = new Set<string>()
-    newDetections.forEach(d => {
-      if (d.user && d.user.isu) {
-        const isu = String(d.user.isu)
-        seen.add(isu)
-      } else if (d.id) {
-        seen.add(String(d.id))
-      }
-    })
     setAttendance(prev => {
       const copy = { ...prev }
+      const seen = new Set<string>()
+      newDetections.forEach(d => {
+        const key = d.user?.isu ? String(d.user.isu) : d.id ? String(d.id) : `${d.name ?? 'unknown'}_${Math.round((d.bbox?.[0] ?? 0)*1000)}_${Math.round((d.bbox?.[1] ?? 0)*1000)}`
+        seen.add(key)
+      })
+      Object.keys(copy).forEach(k => {
+        if (!seen.has(k)) {
+          const entry = copy[k]
+          if (entry.present) {
+            const lastSeen = entry.lastSeen || now
+            const since = entry.presentSince ?? lastSeen
+            const delta = Math.max(0, lastSeen - since)
+            copy[k] = {
+              ...entry,
+              present: false,
+              presentSince: null,
+              totalMs: (entry.totalMs ?? 0) + delta,
+              status: 'вышел'
+            }
+          }
+        }
+      })
       newDetections.forEach(d => {
         const groupVal = d.group ?? undefined
         if (d.user && d.user.isu) {
@@ -334,11 +350,8 @@ export default function LectureView() {
               status: 'на лекции'
             }
           } else {
-            if (!existing.present) {
-              copy[key] = { ...existing, present: true, presentSince: now, lastSeen: now, name: d.name ?? existing.name, group: groupVal ?? existing.group, status: 'на лекции' }
-            } else {
-              copy[key] = { ...existing, lastSeen: now, name: d.name ?? existing.name, group: groupVal ?? existing.group }
-            }
+            if (!existing.present) copy[key] = { ...existing, present: true, presentSince: now, lastSeen: now, name: d.name ?? existing.name, group: groupVal ?? existing.group, status: 'на лекции' }
+            else copy[key] = { ...existing, lastSeen: now, name: d.name ?? existing.name, group: groupVal ?? existing.group }
           }
         }
       })
@@ -371,9 +384,26 @@ export default function LectureView() {
         }
       } else {
         if (!existing.present) {
-          copy[isu] = { ...existing, present: true, presentSince: now, lastSeen: now, name: fullName || existing.name, last_name: userObj.last_name ?? existing.last_name, patronymic: userObj.patronymic ?? existing.patronymic, group: userObj.group ?? existing.group, status: 'на лекции' }
+          copy[isu] = {
+            ...existing,
+            present: true,
+            presentSince: now,
+            lastSeen: now,
+            name: fullName || existing.name,
+            last_name: userObj.last_name ?? existing.last_name,
+            patronymic: userObj.patronymic ?? existing.patronymic,
+            group: userObj.group ?? existing.group,
+            status: 'на лекции'
+          }
         } else {
-          copy[isu] = { ...existing, lastSeen: now, name: fullName || existing.name, last_name: userObj.last_name ?? existing.last_name, patronymic: userObj.patronymic ?? existing.patronymic, group: userObj.group ?? existing.group }
+          copy[isu] = {
+            ...existing,
+            lastSeen: now,
+            name: fullName || existing.name,
+            last_name: userObj.last_name ?? existing.last_name,
+            patronymic: userObj.patronymic ?? existing.patronymic,
+            group: userObj.group ?? existing.group
+          }
         }
       }
       usersByIdRef.current[isu] = copy[isu].name ?? isu
@@ -418,11 +448,13 @@ export default function LectureView() {
           return
         }
         if (parsed.user) {
-          upsertUser(parsed.user)
+          const merged = { ...(parsed.user || {}), group: parsed.group ?? parsed.user.group ?? parsed.group }
+          upsertUser(merged)
           return
         }
         if (parsed.type === 'detection' && parsed.user) {
-          upsertUser(parsed.user)
+          const merged = { ...(parsed.user || {}), group: parsed.group ?? parsed.user.group ?? parsed.group }
+          upsertUser(merged)
           return
         }
         if (parsed.type === 'detections' && Array.isArray(parsed.detections)) {
@@ -651,7 +683,7 @@ export default function LectureView() {
           ) : (
             Object.values(attendance).map(a => {
               const now = Date.now()
-              const runningDelta = a.present && a.presentSince ? (now - a.presentSince) : 0
+              const runningDelta = a.present && a.presentSince ? Math.max(0, now - a.presentSince) : 0
               const total = (a.totalMs ?? 0) + runningDelta
               return (
                 <div className="detected-item" key={a.isu}>
