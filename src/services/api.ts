@@ -31,7 +31,7 @@ export const createUser = (payload: {
   last_name: string
   patronymic: string
   password: string
-}) => api.post('/api/user/create', payload)
+}) => api.post('/api/user/admin/create', payload)
 
 export const addRole = (payload: {
   isu: string
