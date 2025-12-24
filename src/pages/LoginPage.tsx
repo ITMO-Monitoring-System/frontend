@@ -1,44 +1,49 @@
 import React, { useState, useContext } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { login as apiLogin, me as apiMe } from '../services/api'
+import { login as apiLogin } from '../services/api'
 import { AuthContext } from '../contexts/AuthContext'
 import './login.css'
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('')
+  const [isu, setIsu] = useState('')
   const [password, setPassword] = useState('')
+  const [role, setRole] = useState('student')
   const { login, setUser } = useContext(AuthContext)
   const nav = useNavigate()
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
 
-    if (email === '466778' && password === 'admin') {
+    if (isu === '466778' && password === 'admin') {
       login('admin-token')
-      setUser({ id: '466778', name: 'Admin', email: 'admin', role: 'admin' })
+      setUser({ id: '466778', role: 'admin' })
       nav('/')
       return
     }
 
-    if (email === '466777' && password === 'teacher') {
+    if (isu === '466777' && password === 'teacher') {
       login('teacher-token')
-      setUser({ id: '466777', name: 'Teacher', email: 'teacher', role: 'teacher' })
+      setUser({ id: '466777', role: 'teacher' })
       nav('/')
       return
     }
 
-    if (email === '466779' && password === 'student') {
+    if (isu === '466779' && password === 'student') {
       login('student-token')
-      setUser({ id: '466779', name: 'Student', email: 'student', role: 'student' })
+      setUser({ id: '466779', role: 'student' })
       nav('/')
       return
     }
 
     try {
-      const res = await apiLogin(email, password)
-      login(res.data.token)
-      const meRes = await apiMe()
-      setUser(meRes.data)
+      const res = await apiLogin(isu, password, role)
+      const token = res.data.access_token
+      if (!token) {
+        alert('Не получили токен от сервера')
+        return
+      }
+      login(token)
+      setUser({ id: isu, role: role })
       nav('/')
     } catch {
       alert('Login failed')
@@ -54,9 +59,9 @@ export default function LoginPage() {
         <form onSubmit={submit} className="login-form">
           <input
             className="input"
-            placeholder="Номер ису"
-            value={email}
-            onChange={e => setEmail(e.target.value.replace(/\D/g, ''))}
+            placeholder="Номер ISU"
+            value={isu}
+            onChange={e => setIsu(e.target.value.replace(/\D/g, ''))}
           />
 
           <input
@@ -67,6 +72,12 @@ export default function LoginPage() {
             onChange={e => setPassword(e.target.value)}
           />
 
+          <select className="input" value={role} onChange={e => setRole(e.target.value)}>
+            <option value="student">student</option>
+            <option value="teacher">teacher</option>
+            <option value="admin">admin</option>
+          </select>
+
           <button className="login-submit">Войти</button>
         </form>
 
@@ -75,7 +86,7 @@ export default function LoginPage() {
         </div>
 
         <div className="login-info">
-          Преподаватель (тест): <b>admin / admin</b>
+          Тестовые аккаунты: <b>466778 / admin (admin)</b>, <b>466777 / teacher (teacher)</b>, <b>466779 / student (student)</b>
         </div>
       </div>
     </div>

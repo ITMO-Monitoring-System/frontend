@@ -1,6 +1,6 @@
 import React, { useState, useContext } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { register as apiRegister, login as apiLogin, me as apiMe } from '../services/api'
+import { register as apiRegister, me as apiMe } from '../services/api'
 import { AuthContext } from '../contexts/AuthContext'
 import './register.css'
 
@@ -19,7 +19,7 @@ export default function RegisterPage() {
     try {
       await apiRegister(email, password)
 
-      const res = await apiLogin(email, password)
+      const res = await login(email, password)
       login(res.data.token)
 
       const meRes = await apiMe()

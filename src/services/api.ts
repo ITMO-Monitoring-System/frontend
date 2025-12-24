@@ -11,13 +11,13 @@ api.interceptors.request.use((cfg: any) => {
   return cfg
 })
 
-export const login = (email: string, password: string) =>
-  api.post<{ token: string }>('/auth/login', { email, password })
+export const login = (isu: string, password: string, role: string) =>
+  api.post<{ token?: string; access_token?: string }>('/api/auth/login', { isu, password, role })
 
 export const register = (email: string, password: string) =>
   api.post('/auth/register', { email, password })
 
-export const me = () => api.get<User>('/auth/me')
+export const me = () => api.get<User>('/api/auth/me')
 
 export const updateProfile = (userId: string, payload: Partial<User>) =>
   api.put(`/users/${encodeURIComponent(userId)}`, payload)
@@ -38,7 +38,6 @@ export const listUsers = () => api.get<User[]>('/users')
 export const getUser = (userId: string) => api.get<User>(`/users/${encodeURIComponent(userId)}`)
 export const deleteUser = (userId: string) => api.delete(`/users/${encodeURIComponent(userId)}`)
 
-
 export const listDepartments = (params?: { limit?: number; offset?: number }) =>
   api.get<{ departments: Department[]; has_more: boolean }>('/api/departments', { params })
 
@@ -47,7 +46,6 @@ export const getDepartmentByCode = (code: string) =>
 
 export const getDepartmentById = (id: number) =>
   api.get<Department>(`/api/departments/${encodeURIComponent(String(id))}`)
-
 
 export const listGroupsByDepartment = (departmentId: number) =>
   api.get<Group[]>(`/api/departments/${encodeURIComponent(String(departmentId))}/groups`)
@@ -73,7 +71,6 @@ export const removeUserFromGroup = (groupId: string, isu: string) =>
 
 export const listGroupUsers = (groupId: string) =>
   api.get<{ users: User[] }>(`/groups/${encodeURIComponent(groupId)}/users`)
-
 
 export const listLecturesByGroup = (code: string, from?: string, to?: string) =>
   api.get<Lecture[]>(`/api/groups/${encodeURIComponent(code)}/lectures`, {
@@ -137,7 +134,6 @@ export const listPracticesByTeacher = (isu: string, from?: string, to?: string) 
     params: { from, to },
   })
 
-
 export const listStudentsByGroup = (code: string) =>
   api.get<{ user_ids: string[] }>(`/api/groups/${encodeURIComponent(code)}/students`)
 
@@ -172,17 +168,9 @@ export const uploadFaces = (
   onUploadProgress?: (progressEvent: AxiosProgressEvent) => void
 ) => {
   const formData = new FormData()
-  
   formData.append('left_face', files.left)
   formData.append('right_face', files.right)
   formData.append('center_face', files.center)
-
-  console.log('Отправка файлов на сервер...', {
-    isu,
-    url: `/api/user/upload/faces/${encodeURIComponent(isu)}`,
-    totalSize: `${(files.left.size + files.center.size + files.right.size) / 1024} KB`
-  })
-
   return api.post(`/api/user/upload/faces/${encodeURIComponent(isu)}`, formData, {
     headers: {
       'Accept': 'application/json',
@@ -194,13 +182,11 @@ export const uploadFaces = (
   })
 }
 
-
 export const listFaces = (userIdOrIsu: string) =>
   api.get<Face[]>(`/users/${encodeURIComponent(userIdOrIsu)}/faces`)
 
 export const deleteFace = (userIdOrIsu: string, faceId: string) =>
   api.delete(`/users/${encodeURIComponent(userIdOrIsu)}/faces/${encodeURIComponent(faceId)}`)
-
 
 export type AttendanceRecord = { isu: string; lectureId: string; status: 'present' | 'absent' | 'late'; ts: string }
 
