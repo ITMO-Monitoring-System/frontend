@@ -1,4 +1,3 @@
-
 import { useEffect, useRef, useState, useContext } from 'react'
 import { WsService } from '../services/ws'
 import { AuthContext } from '../contexts/AuthContext'
@@ -7,7 +6,7 @@ import { exportAttendanceToXlsx, exportSessionsToXlsx } from '../utils/exportXls
 import './lecture.css'
 import axios from 'axios'
 import { AuthTokenStorage } from '../services/authToken'
-import CameraSender from '../components/CameraSender'
+import useCamera from '../hooks/useCamera' // Используем хук камеры
 import {
   listDepartments,
   listGroupsByDepartment,
@@ -16,7 +15,6 @@ import {
   createLecture,
   createPractice,
 } from '../services/api'
-
 
 const FRAME_WS_BASE = 'ws://89.111.170.130:8000'
 const FRAME_API_BASE = 'http://89.111.170.130:8000'
@@ -73,6 +71,24 @@ export default function LectureView() {
   const eventsSocketRef = useRef<WebSocket | null>(null)
   const lastObjectUrl = useRef<string | null>(null)
 
+  // Добавляем хук камеры
+  const {
+    videoRef,
+    devices: cameraDevices,
+    activeDeviceId,
+    setActiveDeviceId,
+    openDevice,
+    ensurePermissionAndList,
+    error: cameraError
+  } = useCamera()
+
+  // Добавляем WebSocket для отправки видео
+  const videoWsRef = useRef<WebSocket | null>(null)
+  const canvasVideoRef = useRef<HTMLCanvasElement | null>(null)
+  const videoIntervalRef = useRef<number | null>(null)
+  const [videoSending, setVideoSending] = useState(false)
+  const [videoFps, setVideoFps] = useState(10)
+
   const [imageSrc, setImageSrc] = useState<string | null>(null)
   const [detections, setDetections] = useState<Detection[]>([])
   const [attendance, setAttendance] = useState<Record<string, AttendanceEntry>>({})
@@ -102,9 +118,14 @@ export default function LectureView() {
       if (eventsSocketRef.current) { try { eventsSocketRef.current.close() } catch {} ; eventsSocketRef.current = null }
       if (lastObjectUrl.current) { try { URL.revokeObjectURL(lastObjectUrl.current) } catch {} ; lastObjectUrl.current = null }
       if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current)
+      
+      // Очищаем ресурсы видео
+      stopVideoSending()
+      closeVideoWebSocket()
     }
   }, [])
 
+  // Эффект для настройки канваса детекций
   useEffect(() => {
     const img = imgRef.current
     const canvas = canvasRef.current
@@ -143,7 +164,132 @@ export default function LectureView() {
   useEffect(() => {
     if (!user) return
     loadTeacherLectures()
+    // Запрашиваем доступ к камерам при загрузке
+    ensurePermissionAndList().catch(() => {})
   }, [user])
+
+  // Функции для работы с видео
+  const buildVideoWsUrl = (lectureId: number) => {
+    const q = `lecture_id=${encodeURIComponent(String(lectureId))}`
+    const base = FRAME_WS_BASE.replace(/\/$/, '')
+    return `${base}/ws/stream?${q}`
+  }
+
+  const openVideoWebSocket = (lectureId: number) => {
+    try {
+      closeVideoWebSocket()
+      const url = buildVideoWsUrl(lectureId)
+      const socket = new WebSocket(url)
+      socket.binaryType = 'arraybuffer'
+      
+      socket.onopen = () => {
+        console.log('Video WebSocket connected')
+      }
+      
+      socket.onclose = () => {
+        videoWsRef.current = null
+        console.log('Video WebSocket closed')
+      }
+      
+      socket.onerror = (error) => {
+        console.error('Video WebSocket error:', error)
+      }
+      
+      videoWsRef.current = socket
+      return socket
+    } catch (err) {
+      console.error('Failed to open video WebSocket:', err)
+      videoWsRef.current = null
+      return null
+    }
+  }
+
+  const closeVideoWebSocket = () => {
+    if (videoWsRef.current) {
+      try {
+        videoWsRef.current.close()
+      } catch (err) {
+        console.error('Error closing video WebSocket:', err)
+      }
+      videoWsRef.current = null
+    }
+  }
+
+  const sendVideoFrame = async () => {
+    const video = videoRef.current
+    if (!video || video.readyState !== 4) return // Если видео не готово
+    
+    const socket = videoWsRef.current
+    if (!socket || socket.readyState !== WebSocket.OPEN) return
+    
+    // Проверяем буфер
+    if (socket.bufferedAmount > 4000000) {
+      console.warn('Video WebSocket buffer full, skipping frame')
+      return
+    }
+    
+    // Создаем canvas для видео, если его нет
+    if (!canvasVideoRef.current) {
+      const canvas = document.createElement('canvas')
+      canvas.width = 640
+      canvas.height = 360
+      canvasVideoRef.current = canvas
+    }
+    
+    const canvas = canvasVideoRef.current
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    
+    try {
+      // Отрисовываем кадр
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+      
+      // Конвертируем в blob и отправляем
+      const blob = await new Promise<Blob | null>((resolve) => {
+        canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.7)
+      })
+      
+      if (blob) {
+        const arrayBuffer = await blob.arrayBuffer()
+        socket.send(arrayBuffer)
+      }
+    } catch (err) {
+      console.error('Error capturing video frame:', err)
+    }
+  }
+
+  const startVideoSending = (lectureId: number) => {
+    if (videoSending) return
+    
+    // Открываем WebSocket для видео
+    const socket = openVideoWebSocket(lectureId)
+    if (!socket) {
+      console.error('Failed to open video WebSocket')
+      return
+    }
+    
+    // Запускаем отправку кадров
+    const tick = Math.max(1, Math.round(1000 / Math.max(1, videoFps)))
+    videoIntervalRef.current = window.setInterval(() => {
+      if (videoWsRef.current?.readyState === WebSocket.OPEN) {
+        sendVideoFrame()
+      }
+    }, tick)
+    
+    setVideoSending(true)
+    console.log('Video sending started')
+  }
+
+  const stopVideoSending = () => {
+    if (videoIntervalRef.current) {
+      clearInterval(videoIntervalRef.current)
+      videoIntervalRef.current = null
+    }
+    
+    closeVideoWebSocket()
+    setVideoSending(false)
+    console.log('Video sending stopped')
+  }
 
   const loadTeacherLectures = async () => {
     const teacherIsu = (user && (user.isu ?? user.id ?? (user.login as any) ?? '')) as string
@@ -458,14 +604,38 @@ export default function LectureView() {
       } else {
         lectureId = Date.now()
       }
+      
       const res = await startLectureFrame(lectureId, { durable: true, auto_delete: false })
       const returnedRaw = res?.data?.lecture_id ?? res?.data?.lectureId ?? lectureId
       const returnedNum = Number(returnedRaw)
       const finalId = Number.isFinite(returnedNum) ? returnedNum : lectureId
       currentLectureId.current = finalId
+      
+      // Подключаем WebSocket для получения кадров
       connectFrameWsForLecture(finalId)
+      
+      // Подключаем WebSocket для событий
       connectEventsWs()
       sendSubscribe(finalId)
+      
+      // Запускаем отправку видео с камеры
+      if (cameraDevices.length > 0) {
+        // Если камера не выбрана, выбираем первую доступную
+        if (!activeDeviceId) {
+          const firstDevice = cameraDevices[0]
+          if (firstDevice) {
+            try {
+              await openDevice(firstDevice.deviceId)
+            } catch (err) {
+              console.error('Failed to open camera:', err)
+            }
+          }
+        }
+        
+        // Запускаем отправку видео
+        startVideoSending(finalId)
+      }
+      
       setAttendance({})
       setDetections([])
       setStatus('running')
@@ -495,6 +665,9 @@ export default function LectureView() {
       if (lid !== null) { await endLectureFrame(lid, { if_unused: false, if_empty: false }); currentLectureId.current = null }
     } catch {}
     finally {
+      // Останавливаем отправку видео
+      stopVideoSending()
+      
       setStatus('stopped')
       setDetections([])
       setAttendance({})
@@ -532,6 +705,25 @@ export default function LectureView() {
 
   const teacherIsuDisplay = (user && (user.isu ?? user.id ?? (user.login as any) ?? '')) as string
 
+  // Обработчик выбора камеры
+  const handleCameraChange = async (deviceId: string) => {
+    try {
+      setActiveDeviceId(deviceId)
+      await openDevice(deviceId)
+    } catch (err) {
+      console.error('Failed to switch camera:', err)
+    }
+  }
+
+  // Обработчик запроса разрешений камеры
+  const handleRequestCameraPermission = async () => {
+    try {
+      await ensurePermissionAndList()
+    } catch (err) {
+      console.error('Failed to get camera permission:', err)
+    }
+  }
+
   return (
     <div className="lecture-page layout-wide">
       <div className="lecture-left">
@@ -562,6 +754,63 @@ export default function LectureView() {
                 ))}
               </select>
             </div>
+
+            {/* Добавляем выбор камеры */}
+            <div className="camera-selector" style={{ marginTop: '12px' }}>
+              <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px', color: '#374151' }}>
+                Камера для отправки
+              </label>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <select
+                  value={activeDeviceId}
+                  onChange={e => handleCameraChange(e.target.value)}
+                  disabled={status === 'running'}
+                  style={{ flex: 1, padding: '6px', borderRadius: '4px', border: '1px solid #d1d5db' }}
+                >
+                  <option value="">-- выберите камеру --</option>
+                  {cameraDevices.map(device => (
+                    <option key={device.deviceId} value={device.deviceId}>
+                      {device.label || `Камера ${device.deviceId.substring(0, 8)}`}
+                    </option>
+                  ))}
+                </select>
+                <button 
+                  className="btn" 
+                  onClick={handleRequestCameraPermission}
+                  style={{ fontSize: '12px', padding: '6px 12px' }}
+                >
+                  Обновить
+                </button>
+              </div>
+              
+              {/* Настройки FPS */}
+              {status === 'running' && (
+                <div style={{ marginTop: '8px' }}>
+                  <div style={{ fontSize: '12px', color: '#374151' }}>FPS отправки видео</div>
+                  <input
+                    type="range"
+                    min={1}
+                    max={15}
+                    value={videoFps}
+                    onChange={e => setVideoFps(Number(e.target.value))}
+                    style={{ width: '100%' }}
+                  />
+                  <div style={{ fontSize: '12px', textAlign: 'center' }}>{videoFps} fps</div>
+                </div>
+              )}
+              
+              {/* Статус видео */}
+              {cameraError && (
+                <div style={{ fontSize: '11px', color: '#dc2626', marginTop: '4px' }}>
+                  Ошибка камеры: {cameraError}
+                </div>
+              )}
+              {status === 'running' && (
+                <div style={{ fontSize: '11px', color: videoSending ? '#10b981' : '#6b7280', marginTop: '4px' }}>
+                  Видео: {videoSending ? `Отправляется (${videoFps} fps)` : 'Остановлено'}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="lecture-actions unified">
@@ -585,8 +834,6 @@ export default function LectureView() {
             <div className="video-placeholder">Нет видео — нажмите «Начать лекцию»</div>
           )}
         </div>
-
-        <CameraSender getLectureId={() => currentLectureId.current} />
       </div>
 
       <aside className="detected-panel">
@@ -622,6 +869,15 @@ export default function LectureView() {
           )}
         </div>
       </aside>
+
+      {/* Скрытое видео для камеры */}
+      <video
+        ref={videoRef}
+        autoPlay
+        muted
+        playsInline
+        style={{ display: 'none' }}
+      />
 
       {showCreateModal && (
         <div className="modal-overlay">
