@@ -27,11 +27,16 @@ export const uploadFace = (userId: string, fileBase64: string) =>
 
 export const createUser = (payload: {
   isu: string
-  last_name: string
   name: string
-  patronymic?: string
-  role?: string
+  last_name: string
+  patronymic: string
+  password: string
 }) => api.post('/api/user/create', payload)
+
+export const addRole = (payload: {
+  isu: string
+  role: string
+}) => api.post('/api/user/admin/roles', payload)
 
 export const listUsers = () => api.get<User[]>('/users')
 

@@ -5,10 +5,11 @@ import {
   listDepartments,
   listGroupsByDepartment,
   createSubject,
-  setStudentGroup,  // Изменили название функции
+  setStudentGroup,
   removeStudentGroup,
   listStudentsByGroup,
   listSubjects,
+  addRole,
 } from '../services/api'
 import './admin.css'
 
@@ -24,6 +25,8 @@ export default function AdminPanel() {
   const [name, setName] = useState('')
   const [lastName, setLastName] = useState('')
   const [patronymic, setPatronymic] = useState('')
+  const [password, setPassword] = useState('')
+  const [role, setRole] = useState('')
 
   const [subjectName, setSubjectName] = useState('')
 
@@ -65,20 +68,41 @@ export default function AdminPanel() {
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!isu || !name || !lastName) {
-      alert('Заполните ИСУ, имя и фамилию')
+      alert('Заполните данные')
       return
     }
     setBusy(true)
     try {
-      await createUser({ isu, last_name: lastName, name, patronymic })
+      await createUser({ isu, name, last_name: lastName, patronymic, password })
       setIsu('')
       setName('')
       setLastName('')
       setPatronymic('')
+      setPassword('')
       alert('Пользователь создан')
     } catch (err) {
       console.error(err)
       alert('Ошибка создания пользователя')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleAddRole = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!isu || !role) {
+      alert('Заполните данные')
+      return
+    }
+    setBusy(true)
+    try {
+      await addRole({ isu, role })
+      setIsu('')
+      setRole('')
+      alert('Роль добавлена')
+    } catch (err) {
+      console.error(err)
+      alert('Ошибка добавления роли')
     } finally {
       setBusy(false)
     }
@@ -112,7 +136,6 @@ export default function AdminPanel() {
     }
     setBusy(true)
     try {
-      // Используем setStudentGroup с правильным форматом тела
       await setStudentGroup(bindIsu, {
         group_code: bindGroup,
         user_id: bindIsu
@@ -137,7 +160,6 @@ export default function AdminPanel() {
     }
     setBusy(true)
     try {
-      // Просто удаляем привязку студента к группе
       await removeStudentGroup(isuToRemove)
       if (bindGroup) {
         const r = await listStudentsByGroup(bindGroup)
@@ -174,6 +196,8 @@ export default function AdminPanel() {
             <input value={lastName} onChange={e => setLastName(e.target.value)} />
             <label>Отчество</label>
             <input value={patronymic} onChange={e => setPatronymic(e.target.value)} />
+            <label>Пароль</label>
+            <input value={password} onChange={e => setPassword(e.target.value)} />
             <div className="actions">
               <button disabled={busy} className="btn primary" type="submit">Создать</button>
             </div>
@@ -194,6 +218,19 @@ export default function AdminPanel() {
           <ul className="list small">
             {subjects.map(s => <li key={s.id}>{s.name}</li>)}
           </ul>
+        </section>
+
+        <section className="admin-card">
+          <h3>Добавить роль</h3>
+          <form onSubmit={handleAddRole} className="admin-form">
+            <label>ИСУ</label>
+            <input value={isu} onChange={e => setIsu(e.target.value)} />
+            <label>Роль</label>
+            <input value={role} onChange={e => setRole(e.target.value)} />
+            <div className="actions">
+              <button disabled={busy} className="btn primary" type="submit">Создать предмет</button>
+            </div>
+          </form>
         </section>
 
         <section className="admin-card">
