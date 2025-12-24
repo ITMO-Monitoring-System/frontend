@@ -155,10 +155,10 @@ export default function LectureView() {
         Object.keys(copy).forEach(k => {
           const entry = copy[k]
           if (entry.present) {
-            const lastSeen = entry.lastSeen || 0
+            const lastSeen = entry.lastSeen || now
+            const since = entry.presentSince ?? entry.lastSeen ?? now
             if ((now - lastSeen) > 40000) {
-              const since = entry.presentSince ?? lastSeen
-              const delta = Math.max(0, lastSeen - since)
+              const delta = Math.max(0, now - since)
               copy[k] = {
                 ...entry,
                 present: false,
@@ -276,9 +276,8 @@ export default function LectureView() {
         if (!seen.has(k)) {
           const entry = copy[k]
           if (entry.present) {
-            const lastSeen = entry.lastSeen || now
-            const since = entry.presentSince ?? lastSeen
-            const delta = Math.max(0, lastSeen - since)
+            const since = entry.presentSince ?? entry.lastSeen ?? now
+            const delta = Math.max(0, now - since)
             copy[k] = {
               ...entry,
               present: false,
