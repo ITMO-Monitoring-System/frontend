@@ -13,9 +13,9 @@ export default function LoginPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault()
 
-    if (email === 'admin' && password === 'admin') {
+    if (email === '466778' && password === 'admin') {
       login('admin-token')
-      setUser({ id: 'admin', name: 'Admin', email: 'admin', role: 'admin' })
+      setUser({ id: '466778', name: 'Admin', email: 'admin', role: 'admin' })
       nav('/')
       return
     }
@@ -27,9 +27,9 @@ export default function LoginPage() {
       return
     }
 
-    if (email === 'student' && password === 'student') {
+    if (email === '466779' && password === 'student') {
       login('student-token')
-      setUser({ id: 'student', name: 'Student', email: 'student', role: 'student' })
+      setUser({ id: '466779', name: 'Student', email: 'student', role: 'student' })
       nav('/')
       return
     }
