@@ -10,6 +10,7 @@ export interface User {
 }
 
 export interface Detection {
+  group: any;
   id?: string;
   name?: string;
   score?: number;
