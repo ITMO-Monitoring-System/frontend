@@ -276,7 +276,7 @@ export default function AdminPanel() {
             <input value={isu} onChange={e => setIsu(e.target.value)} />
             <label>Роль</label>
             <select value={role} onChange={handleChange}>
-              <option value="">-- Выберите роль --</option>
+              <option value="">-- выберите роль --</option>
               <option value="admin">admin</option>
               <option value="teacher">teacher</option>
               <option value="student">student</option>
