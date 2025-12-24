@@ -14,11 +14,6 @@ api.interceptors.request.use((cfg: any) => {
 export const login = (isu: string, password: string, role: string) =>
   api.post<{ token?: string; access_token?: string }>('/api/auth/login', { isu, password, role })
 
-export const register = (email: string, password: string) =>
-  api.post('/auth/register', { email, password })
-
-export const me = () => api.get<User>('/api/auth/me')
-
 export const updateProfile = (userId: string, payload: Partial<User>) =>
   api.put(`/users/${encodeURIComponent(userId)}`, payload)
 

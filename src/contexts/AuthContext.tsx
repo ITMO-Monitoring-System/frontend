@@ -1,6 +1,5 @@
 import React, { createContext, useEffect, useState } from 'react'
 import type { User } from '../types'
-import { me } from '../services/api'
 import { AuthTokenStorage } from '../services/authToken'
 
 export const AuthContext = createContext<any>(null)
@@ -44,9 +43,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       try {
-        const r = await me()
         if (!mounted) return
-        setUser(r.data)
       } catch (err: any) {
         const status = err?.response?.status
         if (status === 401) {

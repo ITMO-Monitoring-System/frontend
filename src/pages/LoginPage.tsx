@@ -1,5 +1,5 @@
 import React, { useState, useContext } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { login as apiLogin } from '../services/api'
 import { AuthContext } from '../contexts/AuthContext'
 import './login.css'
@@ -80,14 +80,6 @@ export default function LoginPage() {
 
           <button className="login-submit">Войти</button>
         </form>
-
-        <div className="login-info">
-          Нет аккаунта? <Link to="/register">Зарегистрироваться</Link>
-        </div>
-
-        <div className="login-info">
-          Тестовые аккаунты: <b>466778 / admin (admin)</b>, <b>466777 / teacher (teacher)</b>, <b>466779 / student (student)</b>
-        </div>
       </div>
     </div>
   )
