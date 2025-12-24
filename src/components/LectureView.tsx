@@ -1,4 +1,3 @@
-
 import { useEffect, useRef, useState, useContext } from 'react'
 import { WsService } from '../services/ws'
 import { AuthContext } from '../contexts/AuthContext'
@@ -15,7 +14,6 @@ import {
   createLecture,
   createPractice,
 } from '../services/api'
-
 
 const FRAME_WS_BASE = 'ws://89.111.170.130:8000'
 const FRAME_API_BASE = 'http://89.111.170.130:8000'
@@ -59,9 +57,12 @@ type AttendanceEntry = {
   name?: string
   last_name?: string
   patronymic?: string
+  group?: string
   present: boolean
   presentSince: number | null
+  lastSeen: number
   totalMs: number
+  status: 'на лекции' | 'вышел'
 }
 
 export default function LectureView() {
@@ -94,6 +95,7 @@ export default function LectureView() {
 
   const subscriptionsRef = useRef<Set<number>>(new Set())
   const reconnectTimerRef = useRef<number | null>(null)
+  const timeoutCheckerRef = useRef<number | null>(null)
 
   useEffect(() => {
     return () => {
@@ -101,6 +103,7 @@ export default function LectureView() {
       if (eventsSocketRef.current) { try { eventsSocketRef.current.close() } catch {} ; eventsSocketRef.current = null }
       if (lastObjectUrl.current) { try { URL.revokeObjectURL(lastObjectUrl.current) } catch {} ; lastObjectUrl.current = null }
       if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current)
+      if (timeoutCheckerRef.current) window.clearInterval(timeoutCheckerRef.current)
     }
   }, [])
 
@@ -128,7 +131,7 @@ export default function LectureView() {
       ctx.lineWidth = 2
       ctx.strokeStyle = '#00FF66'
       ctx.strokeRect(x, y, w, h)
-      const label = d.name ? `${d.name} ${d.score ? `(${(d.score*100).toFixed(0)}%)` : ''}` : d.id ?? 'unknown'
+      const label = d.user?.isu ? `${d.user.isu} ${d.user.name ? ` ${d.user.name}` : ''}` : d.name ? `${d.name} ${d.score ? `(${(d.score*100).toFixed(0)}%)` : ''}` : d.id ?? 'unknown'
       const padding = 6
       const metrics = ctx.measureText(label)
       const lh = 18
@@ -143,6 +146,34 @@ export default function LectureView() {
     if (!user) return
     loadTeacherLectures()
   }, [user])
+
+  useEffect(() => {
+    timeoutCheckerRef.current = window.setInterval(() => {
+      const now = Date.now()
+      setAttendance(prev => {
+        const copy = { ...prev }
+        Object.keys(copy).forEach(k => {
+          const entry = copy[k]
+          const lastSeen = entry.lastSeen || 0
+          if (entry.present && (now - lastSeen) > 40000) {
+            const delta = Math.max(0, lastSeen - (entry.presentSince ?? lastSeen))
+            copy[k] = {
+              ...entry,
+              present: false,
+              presentSince: null,
+              totalMs: (entry.totalMs ?? 0) + delta,
+              status: 'вышел'
+            }
+          }
+        })
+        return copy
+      })
+    }, 5000)
+    return () => {
+      if (timeoutCheckerRef.current) window.clearInterval(timeoutCheckerRef.current)
+      timeoutCheckerRef.current = null
+    }
+  }, [])
 
   const loadTeacherLectures = async () => {
     const teacherIsu = (user && (user.isu ?? user.id ?? (user.login as any) ?? '')) as string
@@ -242,17 +273,8 @@ export default function LectureView() {
     })
     setAttendance(prev => {
       const copy = { ...prev }
-      Object.keys(copy).forEach(key => {
-        if (!seen.has(key)) {
-          const r = copy[key]
-          if (r.present) {
-            const since = r.presentSince ?? now
-            const delta = Math.max(0, now - since)
-            copy[key] = { ...r, present: false, presentSince: null, totalMs: (r.totalMs ?? 0) + delta }
-          }
-        }
-      })
       newDetections.forEach(d => {
+        const groupVal = d.group ?? undefined
         if (d.user && d.user.isu) {
           const isu = String(d.user.isu)
           const existing = copy[isu]
@@ -260,20 +282,41 @@ export default function LectureView() {
           if (!existing) {
             copy[isu] = {
               isu,
-              name:  d.user.name,
+              name: fullName || d.user.name || d.user.last_name,
               last_name: d.user.last_name,
               patronymic: d.user.patronymic,
+              group: groupVal,
               present: true,
               presentSince: now,
+              lastSeen: now,
               totalMs: 0,
+              status: 'на лекции'
             }
           } else {
             if (!existing.present) {
-              copy[isu] = { ...existing, present: true, presentSince: now, name: fullName || existing.name, last_name: d.user.last_name, patronymic: d.user.patronymic }
+              copy[isu] = {
+                ...existing,
+                present: true,
+                presentSince: now,
+                lastSeen: now,
+                name: fullName || existing.name,
+                last_name: d.user.last_name ?? existing.last_name,
+                patronymic: d.user.patronymic ?? existing.patronymic,
+                group: groupVal ?? existing.group,
+                status: 'на лекции'
+              }
             } else {
-              copy[isu] = { ...existing, name: fullName || existing.name, last_name: d.user.last_name ?? existing.last_name, patronymic: d.user.patronymic ?? existing.patronymic }
+              copy[isu] = {
+                ...existing,
+                lastSeen: now,
+                name: fullName || existing.name,
+                last_name: d.user.last_name ?? existing.last_name,
+                patronymic: d.user.patronymic ?? existing.patronymic,
+                group: groupVal ?? existing.group
+              }
             }
           }
+          usersByIdRef.current[isu] = copy[isu].name ?? isu
         } else {
           const key = d.id ? String(d.id) : `${d.name ?? 'unknown'}_${Math.round((d.bbox?.[0] ?? 0)*1000)}_${Math.round((d.bbox?.[1] ?? 0)*1000)}`
           const existing = copy[key]
@@ -283,13 +326,19 @@ export default function LectureView() {
               name: d.name,
               last_name: undefined,
               patronymic: undefined,
+              group: groupVal,
               present: true,
               presentSince: now,
+              lastSeen: now,
               totalMs: 0,
+              status: 'на лекции'
             }
           } else {
-            if (!existing.present) copy[key] = { ...existing, present: true, presentSince: now, name: d.name ?? existing.name }
-            else copy[key] = { ...existing, name: d.name ?? existing.name }
+            if (!existing.present) {
+              copy[key] = { ...existing, present: true, presentSince: now, lastSeen: now, name: d.name ?? existing.name, group: groupVal ?? existing.group, status: 'на лекции' }
+            } else {
+              copy[key] = { ...existing, lastSeen: now, name: d.name ?? existing.name, group: groupVal ?? existing.group }
+            }
           }
         }
       })
@@ -313,17 +362,21 @@ export default function LectureView() {
           name: fullName || userObj.name || userObj.last_name,
           last_name: userObj.last_name,
           patronymic: userObj.patronymic,
+          group: userObj.group,
           present: true,
           presentSince: now,
+          lastSeen: now,
           totalMs: 0,
+          status: 'на лекции'
         }
       } else {
         if (!existing.present) {
-          copy[isu] = { ...existing, present: true, presentSince: now, name: fullName || existing.name, last_name: userObj.last_name ?? existing.last_name, patronymic: userObj.patronymic ?? existing.patronymic }
+          copy[isu] = { ...existing, present: true, presentSince: now, lastSeen: now, name: fullName || existing.name, last_name: userObj.last_name ?? existing.last_name, patronymic: userObj.patronymic ?? existing.patronymic, group: userObj.group ?? existing.group, status: 'на лекции' }
         } else {
-          copy[isu] = { ...existing, name: fullName || existing.name, last_name: userObj.last_name ?? existing.last_name, patronymic: userObj.patronymic ?? existing.patronymic }
+          copy[isu] = { ...existing, lastSeen: now, name: fullName || existing.name, last_name: userObj.last_name ?? existing.last_name, patronymic: userObj.patronymic ?? existing.patronymic, group: userObj.group ?? existing.group }
         }
       }
+      usersByIdRef.current[isu] = copy[isu].name ?? isu
       return copy
     })
   }
@@ -607,10 +660,12 @@ export default function LectureView() {
                       <div style={{ fontWeight: 700 }}>{a.name ?? a.isu}</div>
                       <div style={{ color: '#6b7280' }}>{a.patronymic ? `${a.patronymic}` : ''}</div>
                       <div style={{ color: '#374151', marginTop: 6 }}>ISU: {a.isu}</div>
+                      <div style={{ color: '#374151', marginTop: 6 }}>Группа: {a.group ?? '—'}</div>
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ fontWeight: 700 }}>{fmtMs(total)}</div>
-                      <div style={{ color: '#6b7280', fontSize: 12 }}>{a.present ? 'в аудитории' : 'не в аудитории'}</div>
+                      <div style={{ color: '#6b7280', fontSize: 12 }}>{a.status}</div>
+                      <div style={{ color: '#9ca3af', fontSize: 12, marginTop: 6 }}>Последнее появление: {new Date(a.lastSeen).toLocaleTimeString()}</div>
                     </div>
                   </div>
                 </div>
