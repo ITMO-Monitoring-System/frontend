@@ -277,9 +277,9 @@ export default function AdminPanel() {
             <label>Роль</label>
             <select value={role} onChange={handleChange}>
               <option value="">-- Выберите роль --</option>
-              <option value="option1">admin</option>
-              <option value="option2">teacher</option>
-              <option value="option3">student</option>
+              <option value="admin">admin</option>
+              <option value="teacher">teacher</option>
+              <option value="student">student</option>
             </select>
             <div className="actions">
               <button disabled={busy} className="btn primary" type="submit">Добавить роль</button>
