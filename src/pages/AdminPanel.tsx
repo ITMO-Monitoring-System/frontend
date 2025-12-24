@@ -65,6 +65,10 @@ export default function AdminPanel() {
       .catch(() => setStudentsInGroup([]))
   }, [bindGroup])
 
+  const handleChange = (event: { target: { value: React.SetStateAction<string> } }) => {
+    setRole(event.target.value);
+  };
+
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!isu || !name || !lastName) {
@@ -271,9 +275,14 @@ export default function AdminPanel() {
             <label>ИСУ</label>
             <input value={isu} onChange={e => setIsu(e.target.value)} />
             <label>Роль</label>
-            <input value={role} onChange={e => setRole(e.target.value)} />
+            <select value={role} onChange={handleChange}>
+              <option value="">-- Выберите роль --</option>
+              <option value="option1">admin</option>
+              <option value="option2">teacher</option>
+              <option value="option3">student</option>
+            </select>
             <div className="actions">
-              <button disabled={busy} className="btn primary" type="submit">Создать предмет</button>
+              <button disabled={busy} className="btn primary" type="submit">Добавить роль</button>
             </div>
           </form>
         </section>
