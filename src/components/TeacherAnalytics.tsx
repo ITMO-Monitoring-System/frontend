@@ -234,11 +234,6 @@ const TeacherAnalytics: React.FC = () => {
 
   return (
     <div className="analytics-container">
-      <div className="analytics-header">
-        <h2>Аналитика посещений лекций</h2>
-        <p>Просмотр статистики посещаемости студентов по вашим лекциям</p>
-      </div>
-
       <div className="analytics-filters">
         <div className="filter-row">
           <div className="filter-group">
