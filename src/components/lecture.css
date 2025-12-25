@@ -375,13 +375,13 @@
   flex-direction: column;
   flex: 3;
   min-width: 0;
-  height: 100%; /* Занимает всю высоту родителя */
+  height: 95%; /* Занимает всю высоту родителя */
 }
 
 /* 4. Видео фрейм растягивается на всю высоту */
 .video-frame.large {
   flex: 1; /* Занимает всё свободное пространство */
-  min-height: 700px; /* Минимальная высота */
+  min-height: 500px; /* Минимальная высота */
   height: auto;
 }
 
@@ -399,7 +399,7 @@
   flex-direction: column;
   flex: 1;
   max-width: 420px;
-  height: 100%; /* Занимает всю высоту родителя */
+  height: 95%; /* Занимает всю высоту родителя */
 }
 
 /* 7. Список детекций с прокруткой */
@@ -411,17 +411,15 @@
 
 /* 8. Секция аналитики - фиксированной высоты внизу */
 .analytics-section {
-  flex-shrink: 0; /* Не сжимается */
-  height: 350px; /* Фиксированная высота */
   min-height: 350px;
   max-height: 400px;
-  margin-top: 0;
+  margin-top: 10px;
 }
 
 /* 9. Для карточки аналитики */
 .analytics-section .analytics-card {
   height: 100%;
-  margin-top: 0;
+  margin-top: 10px;
 }
 
 /* 10. Адаптивность */
