@@ -348,3 +348,36 @@
     grid-template-columns: 1fr;
   }
 }
+
+.lecture-main-container {
+  display: flex;
+  gap: 18px;
+  align-items: stretch;
+  height: calc(100vh - 64px - 300px); /* Высота минус аналитика */
+  min-height: 500px;
+}
+
+.analytics-section {
+  margin-top: 20px;
+  height: 300px;
+  min-height: 300px;
+  flex-shrink: 0;
+}
+
+/* Или если хотите полную высоту с скроллом */
+.lecture-page.layout-wide {
+  flex-direction: column;
+  gap: 18px;
+}
+
+.lecture-content-row {
+  display: flex;
+  gap: 18px;
+  flex: 1;
+  min-height: 0;
+}
+
+.analytics-row {
+  flex-shrink: 0;
+  margin-top: 18px;
+}

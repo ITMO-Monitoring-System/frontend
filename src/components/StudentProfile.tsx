@@ -538,9 +538,7 @@ export default function StudentsProfile() {
   return (
     <div className="student-profile-page" style={{ maxWidth: 1000, margin: '0 auto', padding: 16 }}>
       <h2>Профиль студента</h2>
-
       <StudentFacesUpload />
-
       <StudentVisitsAnalytics />
     </div>
   )

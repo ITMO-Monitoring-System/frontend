@@ -6,7 +6,7 @@ import { exportAttendanceToXlsx, exportSessionsToXlsx } from '../utils/exportXls
 import './lecture.css'
 import axios from 'axios'
 import { AuthTokenStorage } from '../services/authToken'
-import TeacherAnalytics from './TeacherAnalytics';
+import TeacherAnalyticsCard from './TeacherAnalyticsCard'
 import {
   listDepartments,
   listGroupsByDepartment,
@@ -613,94 +613,100 @@ export default function LectureView() {
 
   return (
     <div className="lecture-page layout-wide">
-      <div className="lecture-left">
-        <div className="lecture-top-row">
-          <div className="lecture-selector">
-            <div className="selector-row">
-              <div className="teacher-badge">
-                <div className="teacher-label">Мой ISU</div>
-                <div className="teacher-value">{teacherIsuDisplay || '—'}</div>
+      <div className="lecture-main-container">
+        <div className="lecture-left">
+          <div className="lecture-top-row">
+            <div className="lecture-selector">
+              <div className="selector-row">
+                <div className="teacher-badge">
+                  <div className="teacher-label">Мой ISU</div>
+                  <div className="teacher-value">{teacherIsuDisplay || '—'}</div>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn" onClick={() => openCreateModal(false)}>Создать лекцию</button>
+                </div>
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn" onClick={() => openCreateModal(false)}>Создать лекцию</button>
+
+              <div className="lectures-list">
+                <label>Лекции</label>
+                <select
+                  className="lecture-select"
+                  value={selectedLectureId}
+                  onChange={e => onSelectLecture(e.target.value)}
+                >
+                  <option value="">-- выберите лекцию --</option>
+                  {lectures.map(lec => (
+                    <option key={lec.id} value={String(lec.id)}>
+                      {new Date(lec.date).toLocaleString()} (ID: {lec.id})
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
-            <div className="lectures-list">
-              <label>Лекции</label>
-              <select
-                className="lecture-select"
-                value={selectedLectureId}
-                onChange={e => onSelectLecture(e.target.value)}
-              >
-                <option value="">-- выберите лекцию --</option>
-                {lectures.map(lec => (
-                  <option key={lec.id} value={String(lec.id)}>
-                    {new Date(lec.date).toLocaleString()} (ID: {lec.id})
-                  </option>
-                ))}
-              </select>
+            <div className="lecture-actions unified">
+              {status !== 'running' ? (
+                <button className="btn primary" onClick={startSession}>Начать лекцию</button>
+              ) : (
+                <button className="btn secondary" onClick={stopSession}>Остановить лекцию</button>
+              )}
+              <button className="btn" onClick={exportCurrentSession}>Скачать .csv (сессия)</button>
+              <button className="btn" onClick={exportByLectures}>Скачать .csv (по лекциям)</button>
+              <div className="lecture-status">Статус: <strong>{status}</strong></div>
             </div>
           </div>
 
-          <div className="lecture-actions unified">
-            {status !== 'running' ? (
-              <button className="btn primary" onClick={startSession}>Начать лекцию</button>
-            ) : (
-              <button className="btn secondary" onClick={stopSession}>Остановить лекцию</button>
+          <div className="video-frame large">
+            {imageSrc ? (
+              <img ref={imgRef} src={imageSrc} alt="frame" className="video-img" />
+            ) : null}
+            <canvas ref={canvasRef} className="video-canvas" />
+            {!imageSrc && status !== 'running' && (
+              <div className="video-placeholder">Нет видео — нажмите «Начать лекцию»</div>
             )}
-            <button className="btn" onClick={exportCurrentSession}>Скачать .csv (сессия)</button>
-            <button className="btn" onClick={exportByLectures}>Скачать .csv (по лекциям)</button>
-            <div className="lecture-status">Статус: <strong>{status}</strong></div>
           </div>
         </div>
 
-        <div className="video-frame large">
-          {imageSrc ? (
-            <img ref={imgRef} src={imageSrc} alt="frame" className="video-img" />
-          ) : null}
-          <canvas ref={canvasRef} className="video-canvas" />
-          {!imageSrc && status !== 'running' && (
-            <div className="video-placeholder">Нет видео — нажмите «Начать лекцию»</div>
-          )}
-        </div>
-      </div>
+        <aside className="detected-panel">
+          <div className="detected-header">
+            <h3>Обнаруженные сейчас <span className="badge">{Object.keys(attendance).length}</span></h3>
+            <button className="btn ghost" onClick={() => { setAttendance({}); setDetections([]) }}>Очистить</button>
+          </div>
 
-      <aside className="detected-panel">
-        <div className="detected-header">
-          <h3>Обнаруженные сейчас <span className="badge">{Object.keys(attendance).length}</span></h3>
-          <button className="btn ghost" onClick={() => { setAttendance({}); setDetections([]) }}>Очистить</button>
-        </div>
-
-        <div className="detected-list">
-          {Object.values(attendance).length === 0 ? (
-            <div className="muted">Пока никого не обнаружено</div>
-          ) : (
-            Object.values(attendance).map(a => {
-              const now = Date.now()
-              const runningDelta = a.present && a.presentSince ? Math.max(0, now - a.presentSince) : 0
-              const total = (a.totalMs ?? 0) + runningDelta
-              return (
-                <div className="detected-item" key={a.isu}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                    <div>
-                      <div style={{ fontWeight: 700 }}>{a.name ?? a.isu}</div>
-                      <div style={{ color: '#6b7280' }}>{a.patronymic ? `${a.patronymic}` : ''}</div>
-                      <div style={{ color: '#374151', marginTop: 6 }}>ISU: {a.isu}</div>
-                      <div style={{ color: '#374151', marginTop: 6 }}>Группа: {a.group ?? '—'}</div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontWeight: 700 }}>{fmtMs(total)}</div>
-                      <div style={{ color: '#6b7280', fontSize: 12 }}>{a.status}</div>
-                      <div style={{ color: '#9ca3af', fontSize: 12, marginTop: 6 }}>Последнее появление: {new Date(a.lastSeen).toLocaleTimeString()}</div>
+          <div className="detected-list">
+            {Object.values(attendance).length === 0 ? (
+              <div className="muted">Пока никого не обнаружено</div>
+            ) : (
+              Object.values(attendance).map(a => {
+                const now = Date.now()
+                const runningDelta = a.present && a.presentSince ? Math.max(0, now - a.presentSince) : 0
+                const total = (a.totalMs ?? 0) + runningDelta
+                return (
+                  <div className="detected-item" key={a.isu}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                      <div>
+                        <div style={{ fontWeight: 700 }}>{a.name ?? a.isu}</div>
+                        <div style={{ color: '#6b7280' }}>{a.patronymic ? `${a.patronymic}` : ''}</div>
+                        <div style={{ color: '#374151', marginTop: 6 }}>ISU: {a.isu}</div>
+                        <div style={{ color: '#374151', marginTop: 6 }}>Группа: {a.group ?? '—'}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontWeight: 700 }}>{fmtMs(total)}</div>
+                        <div style={{ color: '#6b7280', fontSize: 12 }}>{a.status}</div>
+                        <div style={{ color: '#9ca3af', fontSize: 12, marginTop: 6 }}>Последнее появление: {new Date(a.lastSeen).toLocaleTimeString()}</div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )
-            })
-          )}
-        </div>
-      </aside>
+                )
+              })
+            )}
+          </div>
+        </aside>
+      </div>
+
+      <div className="analytics-section">
+        <TeacherAnalyticsCard />
+      </div>
 
       {showCreateModal && (
         <div className="modal-overlay">
@@ -777,8 +783,6 @@ export default function LectureView() {
           </div>
         </div>
       )}
-
-      <TeacherAnalytics />
     </div>
   )
 }
