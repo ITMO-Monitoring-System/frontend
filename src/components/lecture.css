@@ -349,13 +349,21 @@
   }
 }
 
-/* Измените структуру lecture-page */
-.lecture-page.layout-wide {
+:root {
+  --bg: #f7f9fc;
+  --card: #ffffff;
+  --accent: #4f46e5;
+  --muted: #64748b;
+  --shadow: 0 12px 36px rgba(15,23,42,0.06);
+  --radius: 12px;
+}
+
+.lecture-page {
   display: flex;
-  flex-direction: column;
+  flex-direction: column; /* Меняем на колонку */
   gap: 18px;
   padding: 18px;
-  height: calc(100vh - 64px);
+  height: calc(100vh - 64px); /* Высота минус header */
   box-sizing: border-box;
   background: var(--bg);
   /* Добавляем вертикальный скролл */
@@ -363,62 +371,109 @@
   overflow-x: hidden;
 }
 
-/* Основная строка с видео и детекциями */
-.lecture-content-row {
+/* Основной контент (видео + детекции) */
+.lecture-main-content {
   display: flex;
   gap: 18px;
-  flex: 0 0 auto; /* Не растягивается */
-  min-height: 500px; /* Фиксированная высота или auto */
-  max-height: 70vh; /* Ограничиваем высоту */
+  flex: 1; /* Занимает все доступное пространство */
+  min-height: 0; /* Важно для flex-потомков */
+  height: calc(100vh - 64px - 400px - 36px); /* Высота минус аналитика и отступы */
+  max-height: 70vh; /* Ограничиваем максимум */
 }
 
-/* Стили для левой и правой колонок остаются прежними */
-.lecture-content-row .lecture-left {
-  flex: 3;
+/* Видео блок */
+.lecture-left {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 3; /* Соотношение 3:1 */
   min-width: 0;
-  height: auto;
+  height: 100%; /* Занимает всю высоту родителя */
 }
 
-.lecture-content-row .detected-panel {
-  flex: 1;
-  max-width: 420px;
-  height: auto;
-}
-
-/* Строка с аналитикой ПОД всем */
-.analytics-row-below {
-  width: 100%;
-  margin-top: 18px;
-  flex-shrink: 0;
-  /* Можно ограничить высоту аналитики */
-  max-height: 50vh;
-  overflow-y: auto;
-}
-
-/* Альтернативно: сделать карточку аналитики сворачиваемой */
-.analytics-row-below .analytics-card {
-  max-height: 500px; /* Ограничиваем высоту */
-  overflow-y: hidden; /* Внутренний скролл */
-}
-
-.analytics-row-below .analytics-content {
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-/* Чтобы видео занимало всю доступную высоту */
-.lecture-left .video-frame.large {
+/* Видео фрейм растягивается */
+.video-frame.large {
+  flex: 1; /* Занимает все доступное пространство */
+  min-height: 300px; /* Минимальная высота */
+  max-height: none;
   height: 100%;
-  min-height: 400px;
+  display: flex;
 }
 
-/* Чтобы панель детекций тоже занимала всю высоту */
+/* Изображение видео на всю высоту */
+.video-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* или cover, в зависимости от предпочтений */
+  background: #000; /* Черный фон если изображение не заполняет */
+}
+
+/* Панель детекций */
 .detected-panel {
   display: flex;
   flex-direction: column;
+  gap: 12px;
+  flex: 1; /* Соотношение 1:3 */
+  max-width: 420px;
+  min-width: 320px;
+  height: 100%; /* Занимает всю высоту родителя */
 }
 
+/* Заголовок детекций фиксированной высоты */
+.detected-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--card);
+  padding: 12px;
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  flex-shrink: 0; /* Не сжимается */
+  height: 60px; /* Фиксированная высота */
+  box-sizing: border-box;
+}
+
+/* Список детекций с прокруткой */
 .detected-list {
-  flex: 1;
-  overflow-y: auto;
+  background: var(--card);
+  padding: 8px;
+  border-radius: 10px;
+  overflow-y: auto; /* Только вертикальный скролл */
+  overflow-x: hidden;
+  box-shadow: var(--shadow);
+  flex: 1; /* Занимает оставшееся пространство */
+  min-height: 0; /* Важно для flex-потомков */
+}
+
+/* Блок с аналитикой - под всем */
+.analytics-section {
+  flex-shrink: 0; /* Не сжимается */
+  margin-top: auto; /* Прижимается к низу */
+  height: 350px; /* Фиксированная высота аналитики */
+  min-height: 350px;
+  max-height: 400px;
+}
+
+/* Адаптивность */
+@media (max-width: 980px) {
+  .lecture-page {
+    flex-direction: column;
+    height: auto;
+  }
+  
+  .lecture-main-content {
+    flex-direction: column;
+    height: auto;
+    max-height: none;
+  }
+  
+  .detected-panel {
+    max-width: none;
+    height: 400px; /* Фиксированная высота на мобилках */
+  }
+  
+  .analytics-section {
+    height: auto;
+    max-height: none;
+  }
 }
