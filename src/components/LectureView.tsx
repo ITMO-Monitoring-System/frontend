@@ -6,6 +6,7 @@ import { exportAttendanceToXlsx, exportSessionsToXlsx } from '../utils/exportXls
 import './lecture.css'
 import axios from 'axios'
 import { AuthTokenStorage } from '../services/authToken'
+import TeacherAnalytics from './TeacherAnalytics';
 import {
   listDepartments,
   listGroupsByDepartment,
@@ -700,6 +701,8 @@ export default function LectureView() {
           )}
         </div>
       </aside>
+
+       <TeacherAnalytics />
 
       {showCreateModal && (
         <div className="modal-overlay">

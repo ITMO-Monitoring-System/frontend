@@ -214,4 +214,47 @@ export const getVisitLecturesBySubject = (
     subject_id: number
   }>(`/api/visits/lectures/${encodeURIComponent(String(subjectId))}`, { params })
 
+export const getTeacherSubjects = () =>
+  api.get<{ subjects: Array<{ id: number; name: string }>; teacher_isu: string }>('/api/visits/teacher/subjects')
+
+export const getTeacherLecturesBySubject = (
+  subjectId: number,
+  params?: {
+    date_from?: string
+    date_to?: string
+    order?: 'asc' | 'desc'
+    page?: number
+    page_size?: number
+  }
+) =>
+  api.get<{
+    items: Array<{ date: string; lecture_id: number }>
+    meta: { page: number; page_size: number; total: number }
+    subject_id: number
+    teacher_isu: string
+  }>(`/api/visits/teacher/${encodeURIComponent(String(subjectId))}/lectures`, { params })
+
+export const getLectureGroups = (lectureId: number) =>
+  api.get<{ groups: Array<{ group_code: string }>; lecture_id: number }>(
+    `/api/visits/teacher/${encodeURIComponent(String(lectureId))}/groups`
+  )
+
+export const getLectureGroupStudents = (
+  lectureId: number,
+  groupCode: string,
+  params?: { page?: number; page_size?: number; gap_seconds?: number }
+) =>
+  api.get<{
+    group_code: string
+    items: Array<{
+      isu: string
+      last_name: string
+      first_name: string
+      patronymic: string
+      present_seconds: number
+    }>
+    lecture_id: number
+    meta: { page: number; page_size: number; total: number }
+  }>(`/api/visits/teacher/${encodeURIComponent(String(lectureId))}/${encodeURIComponent(groupCode)}/students`, { params })
+
 export default api
