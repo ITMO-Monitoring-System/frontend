@@ -7,17 +7,14 @@
   --radius: 12px;
 }
 
-.lecture-page.layout-wide {
+.lecture-page {
   display: flex;
-  flex-direction: column;
   gap: 18px;
+  align-items: stretch;
   padding: 18px;
   height: calc(100vh - 64px);
   box-sizing: border-box;
   background: var(--bg);
-  /* Добавляем вертикальный скролл */
-  overflow-y: auto;
-  overflow-x: hidden;
 }
 
 .lecture-page.layout-wide .lecture-left {
@@ -28,22 +25,6 @@
 .lecture-page.layout-wide .detected-panel {
   flex: 1;
   max-width: 420px;
-}
-
-.lecture-left .video-frame.large {
-  height: 100%;
-  min-height: 400px;
-}
-
-/* Чтобы панель детекций тоже занимала всю высоту */
-.detected-panel {
-  display: flex;
-  flex-direction: column;
-}
-
-.detected-list {
-  flex: 1;
-  overflow-y: auto;
 }
 
 .lecture-left {
@@ -368,27 +349,21 @@
   }
 }
 
-.lecture-main-container {
-  display: flex;
-  gap: 18px;
-  align-items: stretch;
-  height: calc(100vh - 64px - 300px); /* Высота минус аналитика */
-  min-height: 500px;
-}
-
-.analytics-section {
-  margin-top: 20px;
-  height: 300px;
-  min-height: 300px;
-  flex-shrink: 0;
-}
-
-/* Или если хотите полную высоту с скроллом */
+/* Измените структуру lecture-page */
 .lecture-page.layout-wide {
+  display: flex;
   flex-direction: column;
   gap: 18px;
+  padding: 18px;
+  height: calc(100vh - 64px);
+  box-sizing: border-box;
+  background: var(--bg);
+  /* Добавляем вертикальный скролл */
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
+/* Основная строка с видео и детекциями */
 .lecture-content-row {
   display: flex;
   gap: 18px;
@@ -397,7 +372,53 @@
   max-height: 70vh; /* Ограничиваем высоту */
 }
 
-.analytics-row {
-  flex-shrink: 0;
+/* Стили для левой и правой колонок остаются прежними */
+.lecture-content-row .lecture-left {
+  flex: 3;
+  min-width: 0;
+  height: auto;
+}
+
+.lecture-content-row .detected-panel {
+  flex: 1;
+  max-width: 420px;
+  height: auto;
+}
+
+/* Строка с аналитикой ПОД всем */
+.analytics-row-below {
+  width: 100%;
   margin-top: 18px;
+  flex-shrink: 0;
+  /* Можно ограничить высоту аналитики */
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+/* Альтернативно: сделать карточку аналитики сворачиваемой */
+.analytics-row-below .analytics-card {
+  max-height: 500px; /* Ограничиваем высоту */
+  overflow-y: hidden; /* Внутренний скролл */
+}
+
+.analytics-row-below .analytics-content {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+/* Чтобы видео занимало всю доступную высоту */
+.lecture-left .video-frame.large {
+  height: 100%;
+  min-height: 400px;
+}
+
+/* Чтобы панель детекций тоже занимала всю высоту */
+.detected-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.detected-list {
+  flex: 1;
+  overflow-y: auto;
 }

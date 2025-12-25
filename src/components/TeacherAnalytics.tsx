@@ -316,7 +316,7 @@ const TeacherAnalytics: React.FC = () => {
                 onClick={exportAnalyticsToCSV}
                 disabled={teacherStudents.length === 0}
               >
-                📥 Экспорт в CSV
+                Экспорт в CSV
               </button>
             </div>
 

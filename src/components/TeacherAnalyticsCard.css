@@ -67,6 +67,8 @@
 .analytics-card-content {
   border-top: 1px solid #e5e7eb;
   animation: slideDown 0.3s ease-out;
+  padding-left: 20px;
+  padding-right: 20px;
 }
 
 @keyframes slideDown {
