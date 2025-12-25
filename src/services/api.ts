@@ -193,4 +193,25 @@ export const listAttendanceForLecture = (lectureId: string) =>
 
 export const healthCheck = () => api.get('/api/health')
 
+export const getVisitSubjects = () =>
+  api.get<{ isu: string; subjects: Array<{ id: number; name: string }> }>('/api/visits/lectures/subjects')
+
+export const getVisitLecturesBySubject = (
+  subjectId: number,
+  params?: {
+    date_from?: string
+    date_to?: string
+    order?: 'asc' | 'desc'
+    page?: number
+    page_size?: number
+    gap_seconds?: number
+  }
+) =>
+  api.get<{
+    isu: string
+    items: Array<{ date: string; lecture_id: number; present_seconds: number; teacher_isu?: string }>
+    meta: { page: number; page_size: number; total: number }
+    subject_id: number
+  }>(`/api/visits/lectures/${encodeURIComponent(String(subjectId))}`, { params })
+
 export default api
