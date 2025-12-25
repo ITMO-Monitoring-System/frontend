@@ -349,93 +349,75 @@
   }
 }
 
-/* ========== ПАТЧ ДЛЯ ИСПРАВЛЕНИЯ ЛАЙАУТА ========== */
+/* ===== LAYOUT FIX: video + detected full height, analytics below ===== */
 
-/* 1. Делаем основную страницу flex-колонкой */
-.lecture-page.layout-wide {
+.lecture-page {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  height: 100%;
-  overflow-y: auto; /* Разрешаем скролл всей страницы */
+  height: calc(100vh - 64px);
+  overflow: hidden;
 }
 
-/* 2. Контейнер для видео и детекций - занимает всю доступную высоту */
+/* контейнер видео + детекций */
 .lecture-main-container {
   display: flex;
+  flex: 1;
+  min-height: 0;
   gap: 18px;
-  flex: 1; /* Занимает всё оставшееся пространство */
-  min-height: 0; /* Важно для flex-вложенности */
-  max-height: calc(100vh - 64px); /* Минус высота аналитики */
 }
 
-/* 3. Видео блок занимает всю высоту */
+/* левая часть (видео + верхняя панель) */
 .lecture-left {
   display: flex;
   flex-direction: column;
   flex: 3;
   min-width: 0;
-  height: 95%; /* Занимает всю высоту родителя */
+  min-height: 0;
 }
 
-/* 4. Видео фрейм растягивается на всю высоту */
+/* видео заполняет всю оставшуюся высоту */
 .video-frame.large {
-  flex: 1; /* Занимает всё свободное пространство */
-  min-height: 500px; /* Минимальная высота */
-  height: auto;
+  flex: 1;
+  min-height: 0;
 }
 
-/* 5. Изображение видео занимает всю площадь */
-.video-img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain; /* Сохраняет пропорции */
-  background: #000;
-}
-
-/* 6. Детекции также занимают всю высоту */
+/* правая панель детекций */
 .detected-panel {
   display: flex;
   flex-direction: column;
   flex: 1;
   max-width: 420px;
-  height: 95%; /* Занимает всю высоту родителя */
+  min-height: 0;
 }
 
-/* 7. Список детекций с прокруткой */
+/* список внутри детекций со скроллом */
 .detected-list {
   flex: 1;
-  overflow-y: auto; /* Внутренний скролл */
-  overflow-x: hidden;
+  min-height: 0;
+  overflow-y: auto;
 }
 
-/* 8. Секция аналитики - фиксированной высоты внизу */
+/* аналитика всегда ниже, не влияет на высоту видео */
 .analytics-section {
-  min-height: 350px;
-  max-height: 400px;
-  margin-top: 10px;
+  flex-shrink: 0;
 }
 
-/* 9. Для карточки аналитики */
-.analytics-section .analytics-card {
-  height: 100%;
-  margin-top: 10px;
-}
-
-/* 10. Адаптивность */
+/* мобильная версия */
 @media (max-width: 980px) {
+  .lecture-page {
+    height: auto;
+    overflow: visible;
+  }
+
   .lecture-main-container {
     flex-direction: column;
-    max-height: none;
   }
-  
+
   .detected-panel {
     max-width: none;
-    height: 400px; /* Фиксированная высота на мобилках */
   }
-  
-  .analytics-section {
-    height: auto;
-    max-height: none;
+
+  .video-frame.large {
+    min-height: 320px;
   }
 }
