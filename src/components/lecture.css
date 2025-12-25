@@ -7,14 +7,17 @@
   --radius: 12px;
 }
 
-.lecture-page {
+.lecture-page.layout-wide {
   display: flex;
+  flex-direction: column;
   gap: 18px;
-  align-items: stretch;
   padding: 18px;
   height: calc(100vh - 64px);
   box-sizing: border-box;
   background: var(--bg);
+  /* Добавляем вертикальный скролл */
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .lecture-page.layout-wide .lecture-left {
@@ -25,6 +28,22 @@
 .lecture-page.layout-wide .detected-panel {
   flex: 1;
   max-width: 420px;
+}
+
+.lecture-left .video-frame.large {
+  height: 100%;
+  min-height: 400px;
+}
+
+/* Чтобы панель детекций тоже занимала всю высоту */
+.detected-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.detected-list {
+  flex: 1;
+  overflow-y: auto;
 }
 
 .lecture-left {
@@ -373,8 +392,9 @@
 .lecture-content-row {
   display: flex;
   gap: 18px;
-  flex: 1;
-  min-height: 0;
+  flex: 0 0 auto; /* Не растягивается */
+  min-height: 500px; /* Фиксированная высота или auto */
+  max-height: 70vh; /* Ограничиваем высоту */
 }
 
 .analytics-row {

@@ -6,6 +6,8 @@
   margin-top: 24px;
   overflow: hidden;
   transition: all 0.3s ease;
+  margin-left: 0;
+  margin-right: 0;
 }
 
 .analytics-card:hover {
@@ -67,6 +69,7 @@
 .analytics-card-content {
   border-top: 1px solid #e5e7eb;
   animation: slideDown 0.3s ease-out;
+  padding: 0;
 }
 
 @keyframes slideDown {
@@ -91,4 +94,82 @@
 
 .analytics-card-description p {
   margin: 0;
+}
+
+.analytics-card {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  border: 1px solid #e5e7eb;
+  margin-top: 24px;
+  overflow: hidden;
+  transition: all 0.3s ease;
+  /* Добавляем отступы по бокам */
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.analytics-card-content {
+  border-top: 1px solid #e5e7eb;
+  animation: slideDown 0.3s ease-out;
+  /* Убираем лишние отступы */
+  padding: 0;
+}
+
+/* Исправляем отступы внутри аналитики */
+.analytics-container {
+  padding: 0;
+  margin: 0;
+  background: white;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.analytics-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #e5e7eb;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.analytics-header h2 {
+  margin: 0;
+  font-size: 20px; /* Чуть меньше */
+  font-weight: 600;
+}
+
+.analytics-header p {
+  margin: 4px 0 0;
+  opacity: 0.9;
+  font-size: 13px; /* Чуть меньше */
+}
+
+.analytics-filters {
+  padding: 16px 20px; /* Уменьшаем отступы */
+  border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.analytics-content {
+  padding: 16px 20px; /* Уменьшаем отступы */
+  min-height: 300px;
+  position: relative;
+}
+
+/* Уменьшаем отступы в таблице */
+.analytics-table th,
+.analytics-table td {
+  padding: 8px 12px; /* Уменьшаем */
+  font-size: 13px; /* Чуть меньше */
+}
+
+/* Уменьшаем фильтры */
+.filter-select {
+  padding: 8px 10px; /* Уменьшаем */
+  font-size: 13px;
+}
+
+/* Уменьшаем заголовок карточки */
+.analytics-card-header {
+  padding: 16px 20px; /* Уменьшаем */
 }
