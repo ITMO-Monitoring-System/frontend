@@ -143,7 +143,7 @@ const TeacherAnalytics: React.FC = () => {
       const response = await getLectureGroupStudents(lectureId, groupCode, {
         page,
         page_size: studentsMeta.page_size,
-        gap_seconds: 120,
+        gap_seconds: 1,
       });
       setTeacherStudents(response.data.items || []);
       setStudentsMeta(response.data.meta);
@@ -401,13 +401,13 @@ const TeacherAnalytics: React.FC = () => {
           <div className="analytics-empty">
             {!selectedSubjectId && !selectedLectureId && !selectedGroupCode ? (
               <>
-                <div className="empty-icon">📊</div>
+                <div className="empty-icon"></div>
                 <h3>Выберите предмет, лекцию и группу</h3>
                 <p>Для просмотра статистики посещаемости выберите предмет, затем лекцию и группу</p>
               </>
             ) : (
               <>
-                <div className="empty-icon">📝</div>
+                <div className="empty-icon"></div>
                 <h3>Нет данных</h3>
                 <p>По выбранным критериям нет данных о посещаемости</p>
               </>

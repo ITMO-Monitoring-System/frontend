@@ -702,8 +702,6 @@ export default function LectureView() {
         </div>
       </aside>
 
-       <TeacherAnalytics />
-
       {showCreateModal && (
         <div className="modal-overlay">
           <div className="modal-content">
@@ -779,6 +777,8 @@ export default function LectureView() {
           </div>
         </div>
       )}
+
+      <TeacherAnalytics />
     </div>
   )
 }
