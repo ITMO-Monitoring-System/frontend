@@ -15,10 +15,18 @@ import {
   createLecture,
 } from '../services/api'
 
-const FRAME_WS_BASE = 'ws://89.111.170.130:8000'
-const FRAME_API_BASE = 'http://89.111.170.130:8000'
-const API_BASE = 'http://89.111.170.130:8080'
-const EVENTS_WS_BASE = import.meta.env.VITE_WS_EVENTS ?? API_BASE.replace(/^http/, 'ws')
+const trimTrailingSlash = (value: string) => value.replace(/\/$/, '')
+const toWsOrigin = (value: string) => {
+  const origin = trimTrailingSlash(value)
+  if (origin.startsWith('https://')) return origin.replace(/^https:/, 'wss:')
+  if (origin.startsWith('http://')) return origin.replace(/^http:/, 'ws:')
+  return origin
+}
+
+const API_BASE = trimTrailingSlash(import.meta.env.VITE_API_BASE ?? window.location.origin)
+const FRAME_API_BASE = trimTrailingSlash(import.meta.env.VITE_FRAME_API_BASE ?? API_BASE)
+const FRAME_WS_BASE = trimTrailingSlash(import.meta.env.VITE_WS_BASE ?? toWsOrigin(FRAME_API_BASE))
+const EVENTS_WS_BASE = trimTrailingSlash(import.meta.env.VITE_WS_EVENTS ?? toWsOrigin(API_BASE))
 
 const frameApi = axios.create({ baseURL: FRAME_API_BASE })
 frameApi.interceptors.request.use((cfg: any) => {

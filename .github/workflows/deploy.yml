@@ -1,64 +1,83 @@
-name: Deploy Frontend to server
+name: Deploy Frontend
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch: {}
+
+concurrency:
+  group: deploy-frontend
+  cancel-in-progress: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST || secrets.SSH_HOST }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || secrets.SSH_PORT }}
+      DEPLOY_USERNAME: ${{ secrets.DEPLOY_USERNAME || secrets.SSH_USERNAME }}
+      DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY || secrets.SSH_PRIVATE_KEY }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/fizon/frontend' }}
+      APP_ENV_FILE: ${{ secrets.APP_ENV_FILE }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Prepare runtime files
+        run: |
+          set -Eeuo pipefail
+
+          if [ -z "${APP_ENV_FILE:-}" ]; then
+            echo "Missing APP_ENV_FILE secret (.env.production content)."
+            echo "Set VITE_API_BASE, VITE_WS_EVENTS, VITE_FRAME_API_BASE, VITE_WS_BASE."
+            exit 1
+          fi
+
+          printf '%s\n' "${APP_ENV_FILE}" > .env.production
+
       - name: Setup SSH agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          ssh-private-key: ${{ env.DEPLOY_SSH_PRIVATE_KEY }}
 
-      - name: Add server to known_hosts
+      - name: Deploy to server
         run: |
+          set -Eeuo pipefail
+
+          : "${DEPLOY_HOST:?Missing DEPLOY_HOST (or SSH_HOST) secret}"
+          : "${DEPLOY_USERNAME:?Missing DEPLOY_USERNAME (or SSH_USERNAME) secret}"
+          DEPLOY_PORT="${DEPLOY_PORT:-22}"
+          REMOTE="${DEPLOY_USERNAME}@${DEPLOY_HOST}"
+
           mkdir -p ~/.ssh
-          ssh-keyscan -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -p "${DEPLOY_PORT}" "${DEPLOY_HOST}" >> ~/.ssh/known_hosts
 
-      - name: Upload project to server (rsync)
-        run: |
+          ssh -p "${DEPLOY_PORT}" "${REMOTE}" "mkdir -p '${DEPLOY_PATH}'"
+
           rsync -az --delete \
             --exclude ".git" \
-            --exclude ".env*" \
+            --exclude ".github" \
+            --exclude ".codex" \
             --exclude "node_modules" \
-            -e "ssh -p ${{ secrets.SSH_PORT }}" \
-            ./ \
-            "${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}:/home/deploy/frontend/"
+            -e "ssh -p ${DEPLOY_PORT}" \
+            ./ "${REMOTE}:${DEPLOY_PATH}/"
 
-      - name: Build & run Docker container on server
-        run: |
-          ssh -p "${{ secrets.SSH_PORT }}" "${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }}" << 'EOF'
-            set -e
-            cd /home/deploy/frontend
-            
-            echo "=== Проверяем файлы на сервере ==="
-            ls -la
-            echo ""
-            
-            echo "=== Собираем Docker образ... ==="
-            docker build -t frontend:latest .
-            
-            echo "=== Останавливаем предыдущий контейнер... ==="
-            docker stop frontend 2>/dev/null || true
-            docker rm frontend 2>/dev/null || true
-            
-            echo "=== Запускаем новый контейнер... ==="
-            docker run -d \
-              --name frontend \
-              -p 80:80 \
-              --restart unless-stopped \
-              frontend:latest
-            
-            echo "=== Проверяем запущенные контейнеры ==="
-            docker ps --filter "name=frontend"
-            
-            echo "✅ Деплой успешно завершён!"
+          ssh -p "${DEPLOY_PORT}" "${REMOTE}" <<EOF
+            set -Eeuo pipefail
+            cd "${DEPLOY_PATH}"
+
+            if ! command -v docker >/dev/null 2>&1; then
+              echo "docker is not installed on server"
+              exit 1
+            fi
+
+            COMPOSE_ENV_ARGS=""
+            if [ -f ".env.production" ]; then
+              COMPOSE_ENV_ARGS="--env-file .env.production"
+            fi
+
+            docker compose ${COMPOSE_ENV_ARGS} -f docker-compose.prod.yml up -d --build --remove-orphans
+            docker compose ${COMPOSE_ENV_ARGS} -f docker-compose.prod.yml ps
+            docker image prune -f
           EOF

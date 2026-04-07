@@ -9,7 +9,10 @@ type Props = {
   initialFps?: number
 }
 
-const DEFAULT_WS = 'ws://89.111.170.130:8000'
+const DEFAULT_WS = (import.meta.env.VITE_WS_BASE ?? (() => {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${protocol}//${window.location.host}`
+})()).replace(/\/$/, '')
 
 export default function CameraSender({
   getLectureId,
