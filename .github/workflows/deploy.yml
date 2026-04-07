@@ -16,7 +16,6 @@ jobs:
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST || secrets.SSH_HOST }}
       DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || secrets.SSH_PORT }}
       DEPLOY_USERNAME: ${{ secrets.DEPLOY_USERNAME || secrets.SSH_USERNAME }}
-      DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY || secrets.SSH_PRIVATE_KEY }}
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/fizon/frontend' }}
       APP_ENV_FILE: ${{ secrets.APP_ENV_FILE }}
 
@@ -28,18 +27,16 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          if [ -z "${APP_ENV_FILE:-}" ]; then
-            echo "Missing APP_ENV_FILE secret (.env.production content)."
-            echo "Set VITE_API_BASE, VITE_WS_EVENTS, VITE_FRAME_API_BASE, VITE_WS_BASE."
-            exit 1
+          if [ -n "${APP_ENV_FILE:-}" ]; then
+            printf '%s\n' "${APP_ENV_FILE}" > .env.production
+          else
+            echo "APP_ENV_FILE is not set, keeping server-side .env.production"
           fi
-
-          printf '%s\n' "${APP_ENV_FILE}" > .env.production
 
       - name: Setup SSH agent
         uses: webfactory/ssh-agent@v0.9.0
         with:
-          ssh-private-key: ${{ env.DEPLOY_SSH_PRIVATE_KEY }}
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY || secrets.SSH_PRIVATE_KEY }}
 
       - name: Deploy to server
         run: |
@@ -60,6 +57,7 @@ jobs:
             --exclude ".github" \
             --exclude ".codex" \
             --exclude "node_modules" \
+            --exclude ".env.production" \
             -e "ssh -p ${DEPLOY_PORT}" \
             ./ "${REMOTE}:${DEPLOY_PATH}/"
 
