@@ -81,6 +81,11 @@ type CameraStateResponse = {
   sources?: string[]
 }
 
+type BrowserCameraOption = {
+  value: string
+  label: string
+}
+
 export default function LectureView() {
   const auth = useContext(AuthContext)
   const token = auth?.token ?? null
@@ -119,6 +124,7 @@ export default function LectureView() {
   const [cameraLoading, setCameraLoading] = useState(false)
   const [cameraSwitching, setCameraSwitching] = useState(false)
   const [cameraError, setCameraError] = useState('')
+  const [cameraSourceLabels, setCameraSourceLabels] = useState<Record<string, string>>({})
 
   const subscriptionsRef = useRef<Set<number>>(new Set())
   const reconnectTimerRef = useRef<number | null>(null)
@@ -216,12 +222,68 @@ export default function LectureView() {
     }
   }
 
-  const applyCameraState = (payload: CameraStateResponse) => {
+  const loadBrowserCameraOptions = async (): Promise<BrowserCameraOption[]> => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) {
+      return []
+    }
+
+    const toOptions = (devices: MediaDeviceInfo[]) =>
+      devices
+        .filter(device => device.kind === 'videoinput')
+        .map((device, index) => ({
+          value: String(index),
+          label: device.label?.trim() || `Веб-камера ${index + 1}`,
+        }))
+
+    try {
+      let devices = await navigator.mediaDevices.enumerateDevices()
+      let options = toOptions(devices)
+      if (!options.length) return []
+
+      const labelsMissing = options.every(option => option.label.startsWith('Веб-камера '))
+      if (labelsMissing && navigator.mediaDevices.getUserMedia) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+          stream.getTracks().forEach(track => track.stop())
+          devices = await navigator.mediaDevices.enumerateDevices()
+          options = toOptions(devices)
+        } catch {
+          // Permission denied is acceptable; keep generic labels.
+        }
+      }
+
+      return options
+    } catch {
+      return []
+    }
+  }
+
+  const applyCameraState = (payload: CameraStateResponse, browserOptions: BrowserCameraOption[] = []) => {
     const current = payload.current ?? payload.source ?? ''
-    const sources = Array.isArray(payload.sources) ? payload.sources.filter(Boolean) : []
-    setCameraSources(sources)
+    const serverSources = Array.isArray(payload.sources) ? payload.sources.filter(Boolean) : []
+    const browserSources = browserOptions.map(option => option.value)
+    const mergedSources = Array.from(
+      new Set([current, ...serverSources, ...cameraSources, ...browserSources].filter(Boolean))
+    )
+    if (!mergedSources.length) mergedSources.push('0')
+
+    const labels: Record<string, string> = { ...cameraSourceLabels }
+    mergedSources.forEach(source => {
+      labels[source] = labels[source] || source
+    })
+    browserOptions.forEach(option => {
+      if (mergedSources.includes(option.value)) {
+        labels[option.value] = `${option.label} (устройство)`
+      }
+    })
+    if (current && !labels[current]) {
+      labels[current] = `${current} (текущий)`
+    }
+
+    setCameraSources(mergedSources)
+    setCameraSourceLabels(labels)
     setCameraCurrentSource(current)
-    setSelectedCameraSource(prev => prev || current || sources[0] || '')
+    setSelectedCameraSource(prev => prev || current || mergedSources[0] || '')
     setCameraEnabled(Boolean(payload.enabled))
     setCameraHasFrame(Boolean(payload.has_frame))
   }
@@ -229,10 +291,15 @@ export default function LectureView() {
   const loadCameraSources = async (silent = false) => {
     if (!silent) setCameraLoading(true)
     try {
+      const browserOptions = await loadBrowserCameraOptions()
       const response = await frameApi.get<CameraStateResponse>('/api/cameras')
-      applyCameraState(response.data || {})
+      applyCameraState(response.data || {}, browserOptions)
       setCameraError('')
     } catch (err: any) {
+      const browserOptions = await loadBrowserCameraOptions()
+      if (browserOptions.length) {
+        applyCameraState({}, browserOptions)
+      }
       setCameraError(err?.response?.data?.detail ?? err?.message ?? 'Не удалось получить список камер')
     } finally {
       if (!silent) setCameraLoading(false)
@@ -750,6 +817,9 @@ export default function LectureView() {
                 </select>
               </div>
 
+            </div>
+
+            <div className="lecture-controls">
               <div className="camera-controls">
                 <div className="camera-row">
                   <label htmlFor="teacher-camera-select">Камера перед стартом</label>
@@ -765,7 +835,7 @@ export default function LectureView() {
                     </option>
                     {cameraSources.map(source => (
                       <option key={source} value={source}>
-                        {source}
+                        {cameraSourceLabels[source] ?? source}
                       </option>
                     ))}
                   </select>
@@ -786,24 +856,24 @@ export default function LectureView() {
                 </div>
                 {cameraError ? <div className="camera-error">{cameraError}</div> : null}
               </div>
-            </div>
 
-            <div className="lecture-actions unified">
-              {status !== 'running' ? (
-                <button
-                  className="btn primary"
-                  onClick={startSession}
-                  disabled={cameraLoading || cameraSwitching || !selectedCameraSource}
-                >
-                  Начать лекцию
-                </button>
-              ) : (
-                <button className="btn secondary" onClick={stopSession}>Остановить лекцию</button>
-              )}
-              <button className="btn" onClick={exportCurrentSession}>Скачать .csv (сессия)</button>
-              <button className="btn" onClick={exportByLectures}>Скачать .csv (по лекциям)</button>
-              <button className="btn" onClick={() => setShowAnalyticsModal(true)}>Аналитика</button>
-              <div className="lecture-status">Статус: <strong>{status}</strong></div>
+              <div className="lecture-actions unified">
+                {status !== 'running' ? (
+                  <button
+                    className="btn primary"
+                    onClick={startSession}
+                    disabled={cameraLoading || cameraSwitching || !selectedCameraSource}
+                  >
+                    Начать лекцию
+                  </button>
+                ) : (
+                  <button className="btn secondary" onClick={stopSession}>Остановить лекцию</button>
+                )}
+                <button className="btn" onClick={exportCurrentSession}>Скачать .csv (сессия)</button>
+                <button className="btn" onClick={exportByLectures}>Скачать .csv (по лекциям)</button>
+                <button className="btn" onClick={() => setShowAnalyticsModal(true)}>Аналитика</button>
+                <div className="lecture-status">Статус: <strong>{status}</strong></div>
+              </div>
             </div>
           </div>
 
