@@ -157,7 +157,6 @@ export const getSubjectById = (id: number) =>
   api.get<Subject>(`/api/subjects/${encodeURIComponent(String(id))}`)
 
 export const uploadFaces = (
-  isu: string,
   files: {
     left: File
     right: File
@@ -169,7 +168,7 @@ export const uploadFaces = (
   formData.append('left_face', files.left)
   formData.append('right_face', files.right)
   formData.append('center_face', files.center)
-  return api.post(`/api/user/upload/faces/${encodeURIComponent(isu)}`, formData, {
+  return api.post('/api/user/upload/faces', formData, {
     headers: {
       'Accept': 'application/json',
     },

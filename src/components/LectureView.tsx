@@ -78,12 +78,43 @@ type CameraStateResponse = {
   source?: string
   enabled?: boolean
   has_frame?: boolean
-  sources?: string[]
+  sources?: Array<string | number>
 }
 
 type BrowserCameraOption = {
   value: string
   label: string
+}
+
+const normalizeCameraSource = (source: string | number | null | undefined): string => {
+  if (source === null || source === undefined) return ''
+  return String(source).trim()
+}
+
+const sourceLooksLikeUrl = (source: string) =>
+  /^([a-z]+):\/\//i.test(source) || source.includes('/')
+
+const buildCameraLabel = (source: string, browserOptions: BrowserCameraOption[]): string => {
+  if (!source) return '—'
+  if (source === 'none') return 'Камера отключена'
+
+  if (/^\d+$/.test(source)) {
+    const index = Number(source)
+    const browser = browserOptions[index]
+    if (browser?.label) return browser.label
+    return `Камера #${index}`
+  }
+
+  if (sourceLooksLikeUrl(source)) {
+    try {
+      const url = new URL(source)
+      return `${url.protocol.replace(':', '').toUpperCase()} • ${url.hostname}${url.pathname}`
+    } catch {
+      return source
+    }
+  }
+
+  return source
 }
 
 export default function LectureView() {
@@ -259,32 +290,33 @@ export default function LectureView() {
   }
 
   const applyCameraState = (payload: CameraStateResponse, browserOptions: BrowserCameraOption[] = []) => {
-    const current = payload.current ?? payload.source ?? ''
-    const serverSources = Array.isArray(payload.sources) ? payload.sources.filter(Boolean) : []
-    const browserSources = browserOptions.map(option => option.value)
+    const current = normalizeCameraSource(payload.current ?? payload.source ?? '')
+    const serverSources = Array.isArray(payload.sources)
+      ? payload.sources.map(source => normalizeCameraSource(source)).filter(Boolean)
+      : []
     const mergedSources = Array.from(
-      new Set([current, ...serverSources, ...cameraSources, ...browserSources].filter(Boolean))
+      new Set([current, ...serverSources, ...cameraSources].filter(Boolean))
     )
-    if (!mergedSources.length) mergedSources.push('0')
 
     const labels: Record<string, string> = { ...cameraSourceLabels }
     mergedSources.forEach(source => {
-      labels[source] = labels[source] || source
-    })
-    browserOptions.forEach(option => {
-      if (mergedSources.includes(option.value)) {
-        labels[option.value] = `${option.label} (устройство)`
+      if (!labels[source]) {
+        labels[source] = buildCameraLabel(source, browserOptions)
       }
     })
     if (current && !labels[current]) {
-      labels[current] = `${current} (текущий)`
+      labels[current] = buildCameraLabel(current, browserOptions)
     }
 
     setCameraSources(mergedSources)
     setCameraSourceLabels(labels)
     setCameraCurrentSource(current)
-    setSelectedCameraSource(prev => prev || current || mergedSources[0] || '')
-    setCameraEnabled(Boolean(payload.enabled))
+    setSelectedCameraSource(prev => {
+      if (prev && mergedSources.includes(prev)) return prev
+      if (current && mergedSources.includes(current)) return current
+      return mergedSources[0] || ''
+    })
+    setCameraEnabled(payload.enabled ?? (current !== '' && current !== 'none'))
     setCameraHasFrame(Boolean(payload.has_frame))
   }
 
@@ -296,10 +328,6 @@ export default function LectureView() {
       applyCameraState(response.data || {}, browserOptions)
       setCameraError('')
     } catch (err: any) {
-      const browserOptions = await loadBrowserCameraOptions()
-      if (browserOptions.length) {
-        applyCameraState({}, browserOptions)
-      }
       setCameraError(err?.response?.data?.detail ?? err?.message ?? 'Не удалось получить список камер')
     } finally {
       if (!silent) setCameraLoading(false)
@@ -308,8 +336,11 @@ export default function LectureView() {
 
   const refreshCameraStatus = async () => {
     try {
-      const response = await frameApi.get<CameraStateResponse>('/api/camera/current')
-      applyCameraState(response.data || {})
+      const [response, browserOptions] = await Promise.all([
+        frameApi.get<CameraStateResponse>('/api/camera/current'),
+        loadBrowserCameraOptions(),
+      ])
+      applyCameraState(response.data || {}, browserOptions)
       setCameraError('')
     } catch {
       // silent refresh
@@ -713,6 +744,7 @@ export default function LectureView() {
       const returnedRaw = res?.data?.lecture_id ?? res?.data?.lectureId ?? lectureId
       const returnedNum = Number(returnedRaw)
       const finalId = Number.isFinite(returnedNum) ? returnedNum : lectureId
+      const warning = res?.data?.warning
       currentLectureId.current = finalId
       connectFrameWsForLecture(finalId)
       connectEventsWs()
@@ -720,10 +752,15 @@ export default function LectureView() {
       setAttendance({})
       setDetections([])
       setStatus('running')
+      if (warning) {
+        setCameraError(`Лекция запущена, но камера пока не готова: ${warning}`)
+      } else {
+        setCameraError('')
+      }
       void refreshCameraStatus()
     } catch (err: any) {
       setStatus('error')
-      alert('Не удалось запустить лекцию: ' + (err?.response?.data?.message ?? err?.message ?? 'unknown'))
+      alert('Не удалось запустить лекцию: ' + (err?.response?.data?.detail ?? err?.response?.data?.message ?? err?.message ?? 'unknown'))
     }
   }
 
@@ -848,7 +885,7 @@ export default function LectureView() {
                   </button>
                 </div>
                 <div className="camera-meta">
-                  <span>Текущий источник: <strong>{cameraCurrentSource || '—'}</strong></span>
+                  <span>Текущий источник: <strong>{cameraCurrentSource ? (cameraSourceLabels[cameraCurrentSource] ?? cameraCurrentSource) : '—'}</strong></span>
                   <span>
                     Кадр: <strong className={cameraHasFrame ? 'camera-ok' : 'camera-warn'}>{cameraHasFrame ? 'есть' : 'нет'}</strong>
                   </span>

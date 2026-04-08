@@ -35,29 +35,28 @@
 }
 
 .lecture-top-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(300px, 430px) minmax(0, 1fr);
   gap: 14px;
-  align-items: flex-start;
-  justify-content: space-between;
-  flex-wrap: nowrap;
+  align-items: start;
 }
 
 .lecture-selector {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-width: 320px;
-  max-width: 480px;
-  flex: 0 1 420px;
+  min-width: 0;
+  max-width: none;
+  width: 100%;
 }
 
 .lecture-controls {
-  margin-left: auto;
-  min-width: 480px;
-  flex: 1;
+  min-width: 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  align-items: flex-end;
 }
 
 .selector-row {
@@ -110,7 +109,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: 100%;
+  width: min(100%, 900px);
 }
 
 .camera-row {
@@ -157,6 +156,7 @@
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
+  width: min(100%, 900px);
 }
 
 .lecture-actions.unified .btn {
@@ -223,14 +223,14 @@
 }
 
 .video-frame.large {
-  min-height: clamp(460px, 62vh, 760px);
+  min-height: clamp(540px, 70vh, 900px);
   aspect-ratio: 16 / 9;
 }
 
 .video-img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   display: block;
 }
 
@@ -397,13 +397,12 @@
   .lecture-selector {
     min-width: 0;
     max-width: none;
-    flex: 1;
   }
 
   .lecture-controls {
-    margin-left: 0;
     min-width: 0;
     width: 100%;
+    align-items: stretch;
   }
 
   .detected-panel {
@@ -414,6 +413,10 @@
   .video-frame.large {
     min-height: 320px;
     aspect-ratio: auto;
+  }
+
+  .lecture-top-row {
+    grid-template-columns: 1fr;
   }
 
   .form-row {

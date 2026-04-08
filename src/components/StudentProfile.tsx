@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useContext, useEffect, useMemo, useState } from 'react'
 import type { AxiosProgressEvent } from 'axios'
 import {
   uploadFaces,
   getVisitSubjects,
   getVisitLecturesBySubject,
 } from '../services/api'
+import { AuthContext } from '../contexts/AuthContext'
 import type { Subject as SubjectType } from '../types'
 import './student-profile.css'
 import './student-visits.css'
@@ -12,7 +13,8 @@ import './student-visits.css'
 type Slot = 'left' | 'center' | 'right'
 
 function StudentFacesUpload() {
-  const [isu, setIsu] = useState('')
+  const auth = useContext(AuthContext)
+  const currentUserIsu = (auth?.user?.isu ?? auth?.user?.id ?? '').toString().trim()
   const [files, setFiles] = useState<Partial<Record<Slot, File>>>({})
   const [previews, setPreviews] = useState<Partial<Record<Slot, string>>>({})
   const [uploading, setUploading] = useState(false)
@@ -64,12 +66,12 @@ function StudentFacesUpload() {
   }
 
   const canUploadAll = () => {
-    return isu.trim().length > 0 && files.left && files.center && files.right
+    return currentUserIsu.length > 0 && files.left && files.center && files.right
   }
 
   const handleUpload = async () => {
-    if (!isu.trim()) {
-      alert('Введите ISU студента')
+    if (!currentUserIsu) {
+      alert('Не удалось определить ISU текущего пользователя')
       return
     }
 
@@ -83,7 +85,6 @@ function StudentFacesUpload() {
 
     try {
       await uploadFaces(
-        isu,
         { left: files.left, right: files.right, center: files.center },
         (ev: AxiosProgressEvent) => {
           const loaded = ev.loaded ?? 0
@@ -101,7 +102,6 @@ function StudentFacesUpload() {
 
       setFiles({})
       setPreviews({})
-      setIsu('')
       setProgress(0)
     } catch (err: any) {
       console.error('Ошибка загрузки фотографий:', err)
@@ -117,19 +117,19 @@ function StudentFacesUpload() {
   return (
     <div className="faces-card lowered">
       <div className="faces-header">
-        <h3 className="faces-title">Загрузить фотографии по ISU</h3>
-        <div className="faces-sub">Загрузите 3 фото: левая, фронтальная, правая</div>
+        <h3 className="faces-title">Загрузить мои фотографии</h3>
+        <div className="faces-sub">
+          Загрузите 3 фото: левая, фронтальная, правая
+          {currentUserIsu ? ` (ISU ${currentUserIsu})` : ''}
+        </div>
       </div>
 
       <div className="faces-body">
-        <label className="field-label">ISU студента</label>
-        <input
-          className="input"
-          value={isu}
-          onChange={(e) => setIsu(e.target.value.replace(/\D/g, ''))}
-          placeholder="Введите ISU (только цифры)"
-          disabled={uploading}
-        />
+        {!currentUserIsu ? (
+          <div className="error-text" style={{ marginBottom: 8 }}>
+            Сессия не определена. Перезайдите в аккаунт.
+          </div>
+        ) : null}
 
         <div className="slots-row">
           {(['left', 'center', 'right'] as Slot[]).map((slot) => (
