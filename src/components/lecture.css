@@ -3,28 +3,26 @@
   --card: #ffffff;
   --accent: #4f46e5;
   --muted: #64748b;
-  --shadow: 0 12px 36px rgba(15,23,42,0.06);
+  --shadow: 0 12px 36px rgba(15, 23, 42, 0.06);
   --radius: 12px;
 }
 
 .lecture-page {
   display: flex;
+  flex-direction: column;
   gap: 18px;
-  align-items: stretch;
   padding: 18px;
   height: calc(100vh - 64px);
   box-sizing: border-box;
   background: var(--bg);
+  overflow: hidden;
 }
 
-.lecture-page.layout-wide .lecture-left {
-  flex: 3;
-  min-width: 0;
-}
-
-.lecture-page.layout-wide .detected-panel {
+.lecture-main-container {
+  display: flex;
   flex: 1;
-  max-width: 420px;
+  min-height: 0;
+  gap: 18px;
 }
 
 .lecture-left {
@@ -32,21 +30,23 @@
   flex-direction: column;
   gap: 12px;
   min-width: 0;
-  flex: 1;
+  flex: 3;
+  min-height: 0;
 }
 
 .lecture-top-row {
   display: flex;
   gap: 12px;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .lecture-selector {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 380px;
 }
 
 .selector-row {
@@ -78,10 +78,72 @@
   color: #0f172a;
 }
 
+.lectures-list {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.lecture-select {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #e6e9ef;
+  background: #fff;
+}
+
+.camera-controls {
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.camera-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.camera-row label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.camera-select {
+  min-width: 260px;
+}
+
+.camera-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 13px;
+  color: #475569;
+}
+
+.camera-ok {
+  color: #16a34a;
+}
+
+.camera-warn {
+  color: #dc2626;
+}
+
+.camera-error {
+  font-size: 12px;
+  color: #b91c1c;
+}
+
 .lecture-actions.unified {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .lecture-actions.unified .btn {
@@ -92,6 +154,11 @@
   justify-content: center;
 }
 
+.lecture-status {
+  color: #334155;
+  font-size: 14px;
+}
+
 .btn {
   padding: 8px 12px;
   border-radius: 8px;
@@ -100,7 +167,13 @@
   color: var(--accent);
   cursor: pointer;
   font-weight: 600;
-  box-shadow: 0 6px 18px rgba(79,70,229,0.06);
+  box-shadow: 0 6px 18px rgba(79, 70, 229, 0.06);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .btn.primary {
@@ -108,7 +181,7 @@
   color: #fff;
 }
 
-.btn.primary:hover {
+.btn.primary:hover:not(:disabled) {
   background: #4338ca;
 }
 
@@ -138,7 +211,6 @@
 
 .video-frame.large {
   min-height: 420px;
-  display: flex;
 }
 
 .video-img {
@@ -165,7 +237,6 @@
   justify-content: center;
   color: #fff;
   font-size: 18px;
-  background: transparent;
 }
 
 .detected-panel {
@@ -175,6 +246,7 @@
   min-width: 320px;
   max-width: 420px;
   flex: 1;
+  min-height: 0;
 }
 
 .detected-header {
@@ -185,14 +257,22 @@
   padding: 12px;
   border-radius: 10px;
   box-shadow: var(--shadow);
-  flex-shrink: 0;
+}
+
+.badge {
+  background: #eef2ff;
+  color: var(--accent);
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 13px;
 }
 
 .detected-list {
   background: var(--card);
   padding: 8px;
   border-radius: 10px;
-  overflow: auto;
+  overflow-y: auto;
   box-shadow: var(--shadow);
   flex: 1;
   min-height: 0;
@@ -207,49 +287,8 @@
   border-bottom: none;
 }
 
-.detected-main {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-}
-
-.detected-name {
-  font-weight: 600;
-}
-
-.detected-time {
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.detected-sub {
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 6px;
-}
-
-.badge {
-  background: #eef2ff;
-  color: var(--accent);
-  padding: 4px 8px;
-  border-radius: 999px;
-  font-weight: 700;
-  font-size: 13px;
-}
-
-.lectures-list {
-  margin-top: 8px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.lecture-select {
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid #e6e9ef;
-  background: #fff;
+.muted {
+  color: #6b7280;
 }
 
 .modal-overlay {
@@ -258,17 +297,24 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(7,10,25,0.45);
+  background: rgba(7, 10, 25, 0.45);
   z-index: 1200;
 }
 
 .modal-content {
   width: 680px;
   max-width: calc(100% - 48px);
+  max-height: calc(100vh - 64px);
   background: var(--card);
   border-radius: 12px;
   box-shadow: var(--shadow);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-content.analytics-modal {
+  width: 1120px;
 }
 
 .modal-header {
@@ -281,6 +327,12 @@
 
 .modal-body {
   padding: 16px;
+  overflow: auto;
+}
+
+.analytics-modal-body {
+  padding: 0;
+  overflow: auto;
 }
 
 .modal-close {
@@ -310,16 +362,6 @@
   background: #fff;
 }
 
-.groups-multi .form-input {
-  min-height: 120px;
-}
-
-.form-hint {
-  font-size: 12px;
-  color: var(--muted);
-  margin-top: 8px;
-}
-
 .modal-actions {
   display: flex;
   justify-content: flex-end;
@@ -327,83 +369,7 @@
   padding-top: 12px;
 }
 
-@media (max-width: 980px) {
-  .lecture-page {
-    flex-direction: column;
-    height: auto;
-  }
-
-  .detected-panel {
-    position: static;
-    height: auto;
-    max-width: none;
-  }
-
-  .video-frame.large {
-    min-height: 320px;
-    height: auto;
-  }
-
-  .form-row {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* ===== LAYOUT FIX: video + detected full height, analytics below ===== */
-
-.lecture-page {
-  display: flex;
-  flex-direction: column;
-  height: calc(100vh - 64px);
-  overflow: hidden;
-}
-
-/* контейнер видео + детекций */
-.lecture-main-container {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  gap: 18px;
-}
-
-/* левая часть (видео + верхняя панель) */
-.lecture-left {
-  display: flex;
-  flex-direction: column;
-  flex: 3;
-  min-width: 0;
-  min-height: 0;
-}
-
-/* видео заполняет всю оставшуюся высоту */
-.video-frame.large {
-  flex: 1;
-  min-height: 0;
-}
-
-/* правая панель детекций */
-.detected-panel {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  max-width: 420px;
-  min-height: 0;
-}
-
-/* список внутри детекций со скроллом */
-.detected-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-/* аналитика всегда ниже, не влияет на высоту видео */
-.analytics-section {
-  flex-shrink: 0;
-}
-
-/* мобильная версия */
-@media (max-width: 980px) {
+@media (max-width: 1100px) {
   .lecture-page {
     height: auto;
     overflow: visible;
@@ -411,99 +377,27 @@
 
   .lecture-main-container {
     flex-direction: column;
+    min-height: auto;
+  }
+
+  .lecture-selector {
+    min-width: 0;
   }
 
   .detected-panel {
+    min-width: 0;
     max-width: none;
   }
 
   .video-frame.large {
     min-height: 320px;
   }
-}
 
-/* ===================== VIDEO PRIORITY LAYOUT FIX ===================== */
-
-/* Вся страница — колонка */
-.lecture-page {
-  display: flex;
-  flex-direction: column;
-  height: calc(100vh - 64px);
-  overflow-y: auto;
-}
-
-/* ВЕРХНИЙ БЛОК — фиксирован по высоте */
-.lecture-main-container {
-  display: flex;
-  flex: 0 0 auto;
-  height: calc(100vh - 64px);
-  min-height: 0;
-  gap: 18px;
-}
-
-/* Левая часть */
-.lecture-left {
-  display: flex;
-  flex-direction: column;
-  flex: 3;
-  min-width: 0;
-  min-height: 0;
-}
-
-/* УБИРАЕМ влияние верхней панели на видео */
-.lecture-top-row {
-  flex-shrink: 0;
-}
-
-/* ВИДЕО — ПОЛУЧАЕТ МАКСИМУМ */
-.video-frame.large {
-  flex: 1;
-  min-height: 0;
-  height: auto;
-}
-
-/* Правая панель детекций */
-.detected-panel {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  max-width: 420px;
-  min-height: 0;
-}
-
-/* Скролл только внутри списка */
-.detected-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-/* ===================== ANALYTICS FIX ===================== */
-
-/* Аналитика ВСЕГДА НИЖЕ, никогда не влияет на видео */
-.analytics-section {
-  flex: 0 0 auto;
-  margin-top: 18px;
-}
-
-/* Если внутри аналитики есть expand — он растёт вниз */
-.analytics-section * {
-  max-height: none;
-}
-
-/* ===================== MOBILE ===================== */
-
-@media (max-width: 980px) {
-  .lecture-main-container {
-    height: auto;
-    flex-direction: column;
+  .form-row {
+    grid-template-columns: 1fr;
   }
 
-  .video-frame.large {
-    min-height: 320px;
-  }
-
-  .detected-panel {
-    max-width: none;
+  .modal-content.analytics-modal {
+    width: calc(100% - 24px);
   }
 }

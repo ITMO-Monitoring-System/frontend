@@ -14,7 +14,8 @@ import {
 import './admin.css'
 
 export default function AdminPanel() {
-  const { user } = useContext(AuthContext)
+  const auth = useContext(AuthContext)
+  const user = auth?.user
   const [departments, setDepartments] = useState<Array<{ id: number; code: string; name?: string; alias?: string }>>([])
   const [subjects, setSubjects] = useState<Array<{ id: number; name: string }>>([])
   const [groups, setGroups] = useState<Array<{ code: string; department_id?: number; name?: string }>>([])
@@ -180,12 +181,13 @@ export default function AdminPanel() {
   }
 
   if (!user || user.role !== 'admin') return <div className="no-access">Нет доступа</div>
+  const adminLabel = user.name ?? user.isu ?? user.id
 
   return (
     <div className="admin-page">
       <header className="admin-header">
         <h2>Админ-панель</h2>
-        <div>Пользователь: {user.name}</div>
+        <div>Пользователь: {adminLabel}</div>
       </header>
 
       <main className="admin-main">

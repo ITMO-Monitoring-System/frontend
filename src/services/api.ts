@@ -11,8 +11,24 @@ api.interceptors.request.use((cfg: any) => {
   return cfg
 })
 
+api.interceptors.response.use(
+  response => response,
+  error => {
+    if (error?.response?.status === 401) {
+      AuthTokenStorage.clear()
+      if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+        window.location.assign('/login')
+      }
+    }
+    return Promise.reject(error)
+  }
+)
+
 export const login = (isu: string, password: string, role: string) =>
   api.post<{ token?: string; access_token?: string }>('/api/auth/login', { isu, password, role })
+
+export const getMe = () =>
+  api.get<{ isu: string; role: string; first_name: string; last_name: string; patronymic?: string }>('/api/auth/me')
 
 export const updateProfile = (userId: string, payload: Partial<User>) =>
   api.put(`/users/${encodeURIComponent(userId)}`, payload)
@@ -53,18 +69,7 @@ export const listGroupsByDepartment = (departmentId: number) =>
 export const getGroupByCode = (code: string) =>
   api.get<Group>(`/api/groups/${encodeURIComponent(code)}`)
 
-export const listGroups = async () => {
-  const token = AuthTokenStorage.get()
-  if (token === 'admin-token') {
-    const mock = [
-      { id: 'g1', name: 'ИСИ-01' },
-      { id: 'g2', name: 'ИСИ-02' },
-      { id: 'g3', name: 'КТ-2025' },
-    ]
-    return Promise.resolve({ data: mock })
-  }
-  return api.get('/groups')
-}
+export const listGroups = () => api.get('/groups')
 
 export const removeUserFromGroup = (groupId: string, isu: string) =>
   api.post(`/groups/${encodeURIComponent(groupId)}/removeUser`, { isu })

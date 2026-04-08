@@ -3,7 +3,8 @@ import { AuthContext } from '../contexts/AuthContext';
 import { uploadFace } from '../services/api';
 
 export default function FaceUploader() {
-  const { user } = useContext(AuthContext);
+  const auth = useContext(AuthContext);
+  const user = auth?.user;
   const [files, setFiles] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
 

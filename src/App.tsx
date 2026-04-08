@@ -18,7 +18,8 @@ const RequireAuth: React.FC<{ children: JSX.Element }> = ({ children }) => {
 }
 
 function Root() {
-  const { user } = useContext(AuthContext)
+  const auth = useContext(AuthContext)
+  const user = auth?.user
   if (!user) return null
   if (user.role === 'teacher') return <LectureView />
   if (user.role === 'admin') return <AdminPanel />

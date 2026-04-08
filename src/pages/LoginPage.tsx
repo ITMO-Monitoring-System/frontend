@@ -8,32 +8,15 @@ export default function LoginPage() {
   const [isu, setIsu] = useState('')
   const [password, setPassword] = useState('')
   const [role, setRole] = useState('student')
-  const { login, setUser } = useContext(AuthContext)
+  const [submitting, setSubmitting] = useState(false)
+  const auth = useContext(AuthContext)
   const nav = useNavigate()
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
+    if (!auth) return
 
-    if (isu === '466778' && password === 'admin') {
-      login('admin-token')
-      setUser({ id: '466778', role: 'admin' })
-      nav('/')
-      return
-    }
-
-    if (isu === '466777' && password === 'teacher') {
-      login('teacher-token')
-      setUser({ id: '466777', role: 'teacher' })
-      nav('/')
-      return
-    }
-
-    if (isu === '466779' && password === 'student') {
-      login('student-token')
-      setUser({ id: '466779', role: 'student' })
-      nav('/')
-      return
-    }
+    setSubmitting(true)
 
     try {
       const res = await apiLogin(isu, password, role)
@@ -42,11 +25,13 @@ export default function LoginPage() {
         alert('Не получили токен от сервера')
         return
       }
-      login(token)
-      setUser({ id: isu, role: role })
+      await auth.login(token)
       nav('/')
-    } catch {
-      alert('Login failed')
+    } catch (err: any) {
+      const message = err?.response?.data?.error ?? err?.response?.data?.message ?? 'Login failed'
+      alert(message)
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -78,7 +63,9 @@ export default function LoginPage() {
             <option value="admin">admin</option>
           </select>
 
-          <button className="login-submit">Войти</button>
+          <button className="login-submit" disabled={submitting}>
+            {submitting ? 'Входим...' : 'Войти'}
+          </button>
         </form>
       </div>
     </div>

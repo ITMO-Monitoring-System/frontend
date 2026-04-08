@@ -6,6 +6,7 @@ import './header-bar.css'
 export default function HeaderBar() {
   const auth = useContext(AuthContext)
   const navigate = useNavigate()
+  const userLabel = auth?.user?.name ?? auth?.user?.isu ?? auth?.user?.id ?? ''
 
   const handleLogout = () => {
     try {
@@ -26,7 +27,7 @@ export default function HeaderBar() {
 
         {/* actions on the right */}
         <div className="header-actions">
-          {auth?.user && <div className="header-user" title={auth.user.name}>{auth.user.name}</div>}
+          {auth?.user ? <div className="header-user" title={userLabel}>{userLabel}</div> : null}
           <button className="logout-btn" onClick={handleLogout} aria-label="Выйти из аккаунта">
             Выйти
           </button>
