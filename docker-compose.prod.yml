@@ -5,3 +5,5 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:${APP_BIND_PORT:-18081}:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
