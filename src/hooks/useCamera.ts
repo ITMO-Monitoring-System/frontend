@@ -114,7 +114,7 @@ export default function useCamera() {
   }
 
   // Открытие конкретной камеры
-  const openDevice = async (deviceId?: string, width = 640, height = 360) => {
+  const openDevice = async (deviceId?: string, width = 1920, height = 1080) => {
     try {
       // Закрываем предыдущий поток без сброса activeDeviceId (иначе бесконечный цикл)
       closeStream(false)

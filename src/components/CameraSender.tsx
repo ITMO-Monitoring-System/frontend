@@ -29,8 +29,8 @@ const DEFAULT_WS = (import.meta.env.VITE_WS_BASE ?? (() => {
 const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender({
   getLectureId,
   frameWsBase = DEFAULT_WS,
-  idealWidth = 640,
-  idealHeight = 360,
+  idealWidth = 1920,
+  idealHeight = 1080,
   initialFps = 5,
   onAnnotatedFrame,
   onServerEvent,
@@ -179,7 +179,7 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
     try {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
       const blob = await new Promise<Blob | null>(resolve => {
-        canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.7)
+        canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.85)
       })
       if (blob) await sendBlob(blob)
     } catch {}
