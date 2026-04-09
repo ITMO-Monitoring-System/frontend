@@ -1,5 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
-import useCamera from '../hooks/useCamera' // Путь к вашему хуку
+import { useEffect, useRef, useState, useCallback, useImperativeHandle, forwardRef } from 'react'
+import useCamera from '../hooks/useCamera'
+
+export type CameraSenderHandle = {
+  start: () => Promise<void>
+  stop: () => void
+  isRunning: () => boolean
+}
 
 type Props = {
   getLectureId: () => number | null
@@ -7,6 +13,12 @@ type Props = {
   idealWidth?: number
   idealHeight?: number
   initialFps?: number
+  /** Called when an annotated JPEG frame is received back from face-tracking */
+  onAnnotatedFrame?: (blob: Blob) => void
+  /** Called when a JSON event is received from face-tracking (auto_publish, recognize_result, error) */
+  onServerEvent?: (event: any) => void
+  /** Whether the sender should be active (controlled mode) */
+  active?: boolean
 }
 
 const DEFAULT_WS = (import.meta.env.VITE_WS_BASE ?? (() => {
@@ -14,13 +26,16 @@ const DEFAULT_WS = (import.meta.env.VITE_WS_BASE ?? (() => {
   return `${protocol}//${window.location.host}`
 })()).replace(/\/$/, '')
 
-export default function CameraSender({
+const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender({
   getLectureId,
   frameWsBase = DEFAULT_WS,
   idealWidth = 640,
   idealHeight = 360,
   initialFps = 5,
-}: Props) {
+  onAnnotatedFrame,
+  onServerEvent,
+  active,
+}, ref) {
   const {
     videoRef,
     devices,
@@ -29,7 +44,7 @@ export default function CameraSender({
     openDevice,
     closeStream,
     ensurePermissionAndList,
-    error
+    error: cameraError,
   } = useCamera()
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -38,98 +53,111 @@ export default function CameraSender({
   const [running, setRunning] = useState(false)
   const [fps, setFps] = useState(initialFps)
   const [status, setStatus] = useState<'idle' | 'connected' | 'sending' | 'error'>('idle')
+  const [localError, setLocalError] = useState('')
   const bufferedThreshold = 4_000_000
 
-  // Очистка при размонтировании
+  const onAnnotatedFrameRef = useRef(onAnnotatedFrame)
+  onAnnotatedFrameRef.current = onAnnotatedFrame
+  const onServerEventRef = useRef(onServerEvent)
+  onServerEventRef.current = onServerEvent
+
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      stopSending()
+      stopSendingInternal()
       closeSocket()
       closeStream()
     }
   }, [])
 
-  // Перезапуск отправки при изменении FPS
+  // Restart sending when FPS changes
   useEffect(() => {
     if (running) {
-      restartSending()
+      stopSendingInternal()
+      startSending()
     }
   }, [fps])
 
-  // Построение URL WebSocket
+  // Controlled mode: react to `active` prop
+  useEffect(() => {
+    if (active === undefined) return
+    if (active && !running) {
+      startSending()
+    } else if (!active && running) {
+      stopSendingInternal()
+      closeSocket()
+    }
+  }, [active])
+
   const buildWsUrl = (lectureId: number) => {
     const q = `lecture_id=${encodeURIComponent(String(lectureId))}`
     const base = frameWsBase.replace(/\/$/, '')
     return `${base}/ws/stream?${q}`
   }
 
-  // Открытие WebSocket соединения
   const openSocketForLecture = (lectureId: number) => {
     try {
       closeSocket()
       const url = buildWsUrl(lectureId)
       const socket = new WebSocket(url)
-      
+
       socket.binaryType = 'arraybuffer'
       socket.onopen = () => {
         setStatus('connected')
-        console.log('WebSocket connected')
       }
       socket.onclose = () => {
         setStatus('idle')
         wsRef.current = null
-        console.log('WebSocket closed')
       }
-      socket.onerror = (error) => {
+      socket.onerror = () => {
         setStatus('error')
-        console.error('WebSocket error:', error)
       }
       socket.onmessage = (event) => {
-        console.log('WebSocket message received:', event.data)
+        // Binary = annotated JPEG frame from face-tracking
+        if (event.data instanceof ArrayBuffer) {
+          const blob = new Blob([event.data], { type: 'image/jpeg' })
+          onAnnotatedFrameRef.current?.(blob)
+          return
+        }
+        // Text = JSON event from face-tracking
+        if (typeof event.data === 'string') {
+          try {
+            const parsed = JSON.parse(event.data)
+            onServerEventRef.current?.(parsed)
+          } catch {
+            // ignore
+          }
+        }
       }
-      
+
       wsRef.current = socket
       return socket
-    } catch (err) {
-      console.error('Failed to open WebSocket:', err)
+    } catch {
       wsRef.current = null
       setStatus('error')
       return null
     }
   }
 
-  // Закрытие WebSocket соединения
   const closeSocket = () => {
     if (wsRef.current) {
-      try {
-        wsRef.current.close()
-      } catch (err) {
-        console.error('Error closing WebSocket:', err)
-      }
+      try { wsRef.current.close() } catch {}
       wsRef.current = null
       setStatus('idle')
     }
   }
 
-  // Отправка кадра
   const sendBlob = async (blob: Blob) => {
     const socket = wsRef.current
     if (!socket || socket.readyState !== WebSocket.OPEN) return
-    
-    if (socket.bufferedAmount > bufferedThreshold) {
-      console.warn('WebSocket buffer full, skipping frame')
-      return
-    }
-    
+    if (socket.bufferedAmount > bufferedThreshold) return
+
     try {
       const arr = await blob.arrayBuffer()
       socket.send(arr)
-    } catch (err) {
-      console.error('Failed to send frame:', err)
-    }
+    } catch {}
   }
 
-  // Создание canvas для обработки видео
   const ensureCanvas = () => {
     if (!canvasRef.current) {
       const canvas = document.createElement('canvas')
@@ -140,99 +168,74 @@ export default function CameraSender({
     return canvasRef.current
   }
 
-  // Отправка одного кадра
   const sendFrameOnce = async () => {
     const video = videoRef.current
-    if (!video || video.readyState !== 4) return // Если видео не готово
-    
+    if (!video || video.readyState !== 4) return
+
     const canvas = ensureCanvas()
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    
+
     try {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
       const blob = await new Promise<Blob | null>(resolve => {
         canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.7)
       })
-      
-      if (blob) {
-        await sendBlob(blob)
-      }
-    } catch (err) {
-      console.error('Error capturing frame:', err)
-    }
+      if (blob) await sendBlob(blob)
+    } catch {}
   }
 
-  // Запуск отправки кадров
-  const startSending = async () => {
+  const startSending = useCallback(async () => {
     if (running) return
-    
+
     const lectureId = getLectureId()
     if (!lectureId) {
+      setLocalError('Не выбрана лекция')
       setStatus('error')
-      setError('Не выбрана лекция')
       return
     }
 
-    // Убедимся, что камера выбрана и открыта
+    // Open camera if not yet
     if (!activeDeviceId && devices.length > 0) {
       try {
         await openDevice(devices[0].deviceId)
-      } catch (err) {
-        setError('Не удалось открыть камеру')
+      } catch {
+        setLocalError('Не удалось открыть камеру')
         return
       }
     } else if (!activeDeviceId) {
-      setError('Нет доступных камер')
+      setLocalError('Нет доступных камер')
       return
     }
 
-    // Открываем WebSocket соединение
     const socket = openSocketForLecture(lectureId)
     if (!socket) {
-      setError('Не удалось подключиться к серверу')
+      setLocalError('Не удалось подключиться к серверу')
       return
     }
 
-    // Ждем подключения WebSocket
+    // Wait for WebSocket to connect
     await new Promise<void>((resolve) => {
-      const timeout = setTimeout(() => {
-        resolve()
-      }, 1000)
-      
-      const onOpen = () => {
+      const timeout = setTimeout(resolve, 2000)
+      if (socket.readyState === WebSocket.OPEN) {
         clearTimeout(timeout)
         resolve()
-      }
-      
-      if (socket.readyState === WebSocket.OPEN) {
-        onOpen()
       } else {
-        socket.addEventListener('open', onOpen, { once: true })
+        socket.addEventListener('open', () => { clearTimeout(timeout); resolve() }, { once: true })
       }
     })
 
     const tick = Math.max(1, Math.round(1000 / Math.max(1, fps)))
     intervalRef.current = window.setInterval(() => {
-      const currentLectureId = getLectureId()
-      if (!currentLectureId) return
-      
-      const currentUrl = wsRef.current?.url
-      const wantedUrl = buildWsUrl(currentLectureId)
-      
-      if (currentUrl !== wantedUrl) {
-        openSocketForLecture(currentLectureId)
-      }
-      
       sendFrameOnce()
     }, tick)
-    
+
     setRunning(true)
     setStatus('sending')
-  }
+    setLocalError('')
+  }, [running, fps, activeDeviceId, devices])
 
-  // Остановка отправки
-  const stopSending = () => {
+  const stopSendingInternal = () => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current)
       intervalRef.current = null
@@ -241,54 +244,54 @@ export default function CameraSender({
     setStatus('idle')
   }
 
-  // Перезапуск отправки
-  const restartSending = () => {
-    stopSending()
-    if (running) startSending()
-  }
+  // Expose imperative handle for parent control
+  useImperativeHandle(ref, () => ({
+    start: startSending,
+    stop: () => { stopSendingInternal(); closeSocket() },
+    isRunning: () => running,
+  }), [startSending, running])
 
-  // Обработчик выбора камеры
   const handleDeviceChange = async (deviceId: string) => {
     try {
       setActiveDeviceId(deviceId)
       await openDevice(deviceId)
+      setLocalError('')
     } catch (err) {
-      console.error('Failed to switch camera:', err)
-      setError(`Не удалось переключить камеру: ${err}`)
+      setLocalError(`Не удалось переключить камеру: ${err}`)
     }
   }
 
-  // Обработчик кнопки начала отправки
   const handleStartClick = async () => {
-    setError('')
+    setLocalError('')
     try {
       await startSending()
     } catch (err) {
-      setError(`Ошибка запуска: ${err}`)
+      setLocalError(`Ошибка запуска: ${err}`)
     }
   }
 
-  // Обработчик кнопки остановки
   const handleStopClick = () => {
-    stopSending()
+    stopSendingInternal()
     closeSocket()
-    setError('')
+    setLocalError('')
   }
 
-  // Кнопка для запроса разрешений
   const handleRequestPermission = async () => {
     try {
       await ensurePermissionAndList()
+      setLocalError('')
     } catch (err) {
-      setError(`Ошибка разрешения: ${err}`)
+      setLocalError(`Ошибка разрешения: ${err}`)
     }
   }
 
+  const displayError = localError || cameraError
+
   return (
     <div style={{ padding: 8, borderRadius: 8, background: '#fff', boxShadow: '0 6px 18px rgba(0,0,0,0.06)' }}>
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <div>
-          <div style={{ fontSize: 12, color: '#374151' }}>Камера</div>
+          <div style={{ fontSize: 12, color: '#374151' }}>Камера браузера</div>
           <select
             value={activeDeviceId}
             onChange={(e) => handleDeviceChange(e.target.value)}
@@ -317,83 +320,43 @@ export default function CameraSender({
         </div>
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <button
-            className="btn"
-            onClick={handleRequestPermission}
-            disabled={running}
-          >
+          <button className="btn ghost" onClick={handleRequestPermission} disabled={running}>
             Обновить камеры
           </button>
-          <button
-            className="btn"
-            onClick={handleStartClick}
-            disabled={running || !activeDeviceId}
-          >
-            Начать отправку
-          </button>
-          <button
-            className="btn"
-            onClick={handleStopClick}
-            disabled={!running}
-          >
-            Остановить
-          </button>
+          {!running ? (
+            <button className="btn" onClick={handleStartClick} disabled={!activeDeviceId}>
+              Начать отправку
+            </button>
+          ) : (
+            <button className="btn" onClick={handleStopClick}>
+              Остановить
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Видео элемент */}
-      <div style={{ marginTop: 12 }}>
-        <video
-          ref={videoRef}
-          autoPlay
-          muted
-          playsInline
-          style={{
-            width: 320,
-            height: 180,
-            background: '#000',
-            borderRadius: 8,
-            display: activeDeviceId ? 'block' : 'none'
-          }}
-        />
-        {!activeDeviceId && (
-          <div style={{
-            width: 320,
-            height: 180,
-            background: '#f3f4f6',
-            borderRadius: 8,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#6b7280'
-          }}>
-            Выберите камеру
-          </div>
-        )}
-      </div>
+      {/* Hidden video element for camera capture */}
+      <video
+        ref={videoRef}
+        autoPlay
+        muted
+        playsInline
+        style={{ width: 0, height: 0, position: 'absolute', opacity: 0 }}
+      />
 
-      {/* Статус и ошибки */}
-      <div style={{ marginTop: 8 }}>
-        {error && (
-          <div style={{ fontSize: 12, color: '#dc2626', marginBottom: 4 }}>
-            Ошибка: {error}
-          </div>
-        )}
-        <div style={{ fontSize: 12, color: '#6b7280' }}>
-          Статус WebSocket: {status} 
-          {wsRef.current && ` (${wsRef.current.readyState === 1 ? 'OPEN' : 'CLOSED'})`}
+      {displayError && (
+        <div style={{ marginTop: 8, fontSize: 12, color: '#dc2626' }}>
+          {displayError}
         </div>
-        <div style={{ fontSize: 12, color: '#6b7280' }}>
-          Статус отправки: {running ? 'Активно' : 'Остановлено'}
-        </div>
-        <div style={{ fontSize: 12, color: '#6b7280' }}>
-          Доступно камер: {devices.length}
-        </div>
+      )}
+
+      <div style={{ marginTop: 4, fontSize: 11, color: '#9ca3af' }}>
+        {running ? `Отправка ${fps} fps` : 'Ожидание'}
+        {activeDeviceId ? ` • камера подключена` : ''}
+        {wsRef.current?.readyState === WebSocket.OPEN ? ' • WS подключён' : ''}
       </div>
     </div>
   )
-}
+})
 
-function setError(_arg0: string) {
-    throw new Error('Function not implemented.')
-}
+export default CameraSender
