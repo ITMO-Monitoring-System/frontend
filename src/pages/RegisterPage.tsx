@@ -15,26 +15,49 @@ export default function RegisterPage() {
   const [selectedDeptId, setSelectedDeptId] = useState<number | ''>('')
   const [groups, setGroups] = useState<Group[]>([])
   const [selectedGroupCode, setSelectedGroupCode] = useState('')
+  const [departmentsLoading, setDepartmentsLoading] = useState(true)
+  const [departmentsError, setDepartmentsError] = useState('')
+  const [groupsLoading, setGroupsLoading] = useState(false)
+  const [groupsError, setGroupsError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   const nav = useNavigate()
 
   useEffect(() => {
-    listDepartments({ limit: 200 })
+    setDepartmentsLoading(true)
+    setDepartmentsError('')
+    listDepartments({ limit: 200, offset: 0 })
       .then(res => setDepartments(res.data.departments || []))
-      .catch(() => setDepartments([]))
+      .catch(() => {
+        setDepartments([])
+        setDepartmentsError('Не удалось загрузить направления')
+      })
+      .finally(() => setDepartmentsLoading(false))
   }, [])
 
   useEffect(() => {
     if (selectedDeptId === '') {
       setGroups([])
       setSelectedGroupCode('')
+      setGroupsError('')
+      setGroupsLoading(false)
       return
     }
+    setGroupsLoading(true)
+    setGroupsError('')
     listGroupsByDepartment(selectedDeptId)
       .then(res => setGroups(res.data || []))
-      .catch(() => setGroups([]))
+      .catch(() => {
+        setGroups([])
+        setGroupsError('Не удалось загрузить группы для выбранного направления')
+      })
+      .finally(() => setGroupsLoading(false))
   }, [selectedDeptId])
+
+  const getDepartmentLabel = (department: Department) =>
+    department.name?.trim() || department.code?.trim() || department.alias?.trim() || String(department.id)
+
+  const getGroupLabel = (group: Group) => group.name?.trim() || group.code
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -126,26 +149,38 @@ export default function RegisterPage() {
           <select
             className="input"
             value={selectedDeptId}
+            disabled={departmentsLoading}
             onChange={e => setSelectedDeptId(e.target.value ? parseInt(e.target.value, 10) : '')}
           >
-            <option value="">-- Направление --</option>
+            <option value="">
+              {departmentsLoading ? '-- Загрузка направлений --' : '-- Направление --'}
+            </option>
             {departments.map(d => (
-              <option key={d.id} value={String(d.id)}>{d.name}</option>
+              <option key={d.id} value={String(d.id)}>{getDepartmentLabel(d)}</option>
             ))}
           </select>
+          {departmentsError && <div className="login-info">{departmentsError}</div>}
 
-          {groups.length > 0 && (
-            <select
-              className="input"
-              value={selectedGroupCode}
-              onChange={e => setSelectedGroupCode(e.target.value)}
-            >
-              <option value="">-- Группа --</option>
-              {groups.map(g => (
-                <option key={g.code} value={g.code}>{g.name || g.code}</option>
-              ))}
-            </select>
-          )}
+          <select
+            className="input"
+            value={selectedGroupCode}
+            disabled={selectedDeptId === '' || groupsLoading || groups.length === 0}
+            onChange={e => setSelectedGroupCode(e.target.value)}
+          >
+            <option value="">
+              {selectedDeptId === ''
+                ? '-- Сначала выберите направление --'
+                : groupsLoading
+                  ? '-- Загрузка групп --'
+                  : groups.length === 0
+                    ? '-- Нет доступных групп --'
+                    : '-- Группа --'}
+            </option>
+            {groups.map(g => (
+              <option key={g.code} value={g.code}>{getGroupLabel(g)}</option>
+            ))}
+          </select>
+          {groupsError && <div className="login-info">{groupsError}</div>}
 
           <button className="login-submit" disabled={submitting}>
             {submitting ? 'Регистрация...' : 'Зарегистрироваться'}
