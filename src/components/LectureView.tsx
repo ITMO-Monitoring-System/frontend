@@ -6,7 +6,8 @@ import './lecture.css'
 import axios from 'axios'
 import { AuthTokenStorage } from '../services/authToken'
 import TeacherAnalytics from './TeacherAnalytics'
-import CameraSender, { CameraSenderHandle } from './CameraSender'
+import CameraSender from './CameraSender'
+import type { CameraSenderHandle } from './CameraSender'
 import {
   listDepartments,
   listGroupsByDepartment,
@@ -75,7 +76,6 @@ type AttendanceEntry = {
 
 export default function LectureView() {
   const auth = useContext(AuthContext)
-  const token = auth?.token ?? null
   const user = auth?.user ?? null
   const imgRef = useRef<HTMLImageElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)

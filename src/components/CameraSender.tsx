@@ -52,7 +52,7 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
   const intervalRef = useRef<number | null>(null)
   const [running, setRunning] = useState(false)
   const [fps, setFps] = useState(initialFps)
-  const [status, setStatus] = useState<'idle' | 'connected' | 'sending' | 'error'>('idle')
+  const [, setStatus] = useState<'idle' | 'connected' | 'sending' | 'error'>('idle')
   const [localError, setLocalError] = useState('')
   const bufferedThreshold = 4_000_000
 
