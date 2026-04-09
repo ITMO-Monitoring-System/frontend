@@ -12,6 +12,32 @@ import './student-visits.css'
 
 type Slot = 'left' | 'center' | 'right'
 
+function PhotoStatusBadge() {
+  const auth = useContext(AuthContext)
+  const hasPhotos = auth?.user?.has_photos
+
+  if (hasPhotos === undefined) return null
+
+  return (
+    <div
+      style={{
+        padding: '10px 16px',
+        borderRadius: 8,
+        marginBottom: 12,
+        fontSize: 14,
+        fontWeight: 600,
+        background: hasPhotos ? '#dcfce7' : '#fef9c3',
+        color: hasPhotos ? '#166534' : '#854d0e',
+        border: `1px solid ${hasPhotos ? '#bbf7d0' : '#fde68a'}`,
+      }}
+    >
+      {hasPhotos
+        ? 'Фото загружены — вас можно распознать на лекции'
+        : 'Фото не загружены — загрузите 3 фото для распознавания на лекциях'}
+    </div>
+  )
+}
+
 function StudentFacesUpload() {
   const auth = useContext(AuthContext)
   const currentUserIsu = (auth?.user?.isu ?? auth?.user?.id ?? '').toString().trim()
@@ -538,6 +564,7 @@ export default function StudentsProfile() {
   return (
     <div className="student-profile-page" style={{ maxWidth: 1000, margin: '0 auto', padding: 16 }}>
       <h2>Профиль студента</h2>
+      <PhotoStatusBadge />
       <StudentFacesUpload />
       <StudentVisitsAnalytics />
     </div>

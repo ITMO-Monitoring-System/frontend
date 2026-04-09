@@ -28,7 +28,16 @@ export const login = (isu: string, password: string, role: string) =>
   api.post<{ token?: string; access_token?: string }>('/api/auth/login', { isu, password, role })
 
 export const getMe = () =>
-  api.get<{ isu: string; role: string; first_name: string; last_name: string; patronymic?: string }>('/api/auth/me')
+  api.get<{ isu: string; role: string; first_name: string; last_name: string; patronymic?: string; group?: string; has_photos?: boolean }>('/api/auth/me')
+
+export const register = (payload: {
+  isu: string
+  first_name: string
+  last_name: string
+  patronymic?: string
+  password: string
+  group_code?: string
+}) => api.post<{ success: boolean }>('/api/auth/register', payload)
 
 export const updateProfile = (userId: string, payload: Partial<User>) =>
   api.put(`/users/${encodeURIComponent(userId)}`, payload)

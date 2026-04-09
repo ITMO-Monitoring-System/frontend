@@ -9,6 +9,8 @@ type AuthUser = User & {
   last_name?: string
   patronymic?: string
   name?: string
+  group?: string
+  has_photos?: boolean
 }
 
 type AuthContextValue = {
@@ -49,6 +51,8 @@ const mapMeToUser = (me: {
   first_name: string
   last_name: string
   patronymic?: string
+  group?: string
+  has_photos?: boolean
 }): AuthUser | null => {
   const role = parseRole(me.role)
   if (!role || !me.isu) return null
@@ -60,6 +64,8 @@ const mapMeToUser = (me: {
     last_name: me.last_name,
     patronymic: me.patronymic,
     name: buildDisplayName(me.first_name, me.last_name),
+    group: me.group,
+    has_photos: me.has_photos,
   }
 }
 
