@@ -116,8 +116,8 @@ export default function useCamera() {
   // Открытие конкретной камеры
   const openDevice = async (deviceId?: string, width = 640, height = 360) => {
     try {
-      // Закрываем предыдущий поток
-      closeStream()
+      // Закрываем предыдущий поток без сброса activeDeviceId (иначе бесконечный цикл)
+      closeStream(false)
 
       if (typeof window === 'undefined' || !navigator.mediaDevices) {
         throw new Error('Media devices not available')
@@ -134,21 +134,15 @@ export default function useCamera() {
       }
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints)
-      
+
       streamRef.current = stream
-      
+
       // Устанавливаем поток в видео элемент
       if (videoRef.current) {
         videoRef.current.srcObject = stream
-        videoRef.current.play().catch(err => {
-          console.error('Failed to play video:', err)
-          setError(`Не удалось воспроизвести видео: ${err.message}`)
+        videoRef.current.play().catch(() => {
+          // play() can be interrupted when switching cameras quickly — safe to ignore
         })
-      }
-
-      // Обновляем выбранное устройство
-      if (deviceId) {
-        setActiveDeviceId(deviceId)
       }
 
       setError('')
@@ -161,19 +155,21 @@ export default function useCamera() {
   }
 
   // Закрытие потока
-  const closeStream = () => {
+  const closeStream = (resetDevice = true) => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => {
         track.stop()
       })
       streamRef.current = null
     }
-    
+
     if (videoRef.current) {
       videoRef.current.srcObject = null
     }
-    
-    setActiveDeviceId('')
+
+    if (resetDevice) {
+      setActiveDeviceId('')
+    }
   }
 
   return {
