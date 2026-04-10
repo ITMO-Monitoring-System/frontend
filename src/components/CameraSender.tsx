@@ -29,8 +29,8 @@ const DEFAULT_WS = (import.meta.env.VITE_WS_BASE ?? (() => {
 const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender({
   getLectureId,
   frameWsBase = DEFAULT_WS,
-  idealWidth = 1920,
-  idealHeight = 1080,
+  idealWidth = 1280,
+  idealHeight = 720,
   initialFps = 5,
   onAnnotatedFrame,
   onServerEvent,
