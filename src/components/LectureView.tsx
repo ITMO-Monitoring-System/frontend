@@ -83,7 +83,7 @@ export default function LectureView() {
   const lastObjectUrl = useRef<string | null>(null)
   const cameraSenderRef = useRef<CameraSenderHandle | null>(null)
 
-  const [imageSrc, setImageSrc] = useState<string | null>(null)
+  const [hasFrame, setHasFrame] = useState<boolean>(false)
   const [detections, setDetections] = useState<Detection[]>([])
   const [attendance, setAttendance] = useState<Record<string, AttendanceEntry>>({})
   const [status, setStatus] = useState<'idle'|'starting'|'running'|'error'|'stopped'>('idle')
@@ -120,7 +120,7 @@ export default function LectureView() {
   useEffect(() => {
     const img = imgRef.current
     const canvas = canvasRef.current
-    if (!canvas || !img) return
+    if (!canvas || !img || !hasFrame) return
     const rect = img.getBoundingClientRect()
     const dpr = window.devicePixelRatio || 1
     canvas.style.width = rect.width + 'px'
@@ -150,7 +150,7 @@ export default function LectureView() {
       ctx.fillStyle = 'white'
       ctx.fillText(label, x + 4, y - 4)
     })
-  }, [imageSrc, detections])
+  }, [detections, hasFrame])
 
   useEffect(() => {
     if (!user) return
@@ -461,11 +461,18 @@ export default function LectureView() {
   }
 
   // Annotated frame received from face-tracking via CameraSender WebSocket
+  // Direct DOM update (no React re-render per frame)
   const handleAnnotatedFrame = useCallback((blob: Blob) => {
     if (lastObjectUrl.current) { try { URL.revokeObjectURL(lastObjectUrl.current) } catch {} }
     const url = URL.createObjectURL(blob)
     lastObjectUrl.current = url
-    setImageSrc(url)
+    if (imgRef.current) {
+      imgRef.current.src = url
+      if (!imgRef.current.style.display || imgRef.current.style.display === 'none') {
+        imgRef.current.style.display = ''
+      }
+    }
+    setHasFrame(prev => prev ? prev : true)
   }, [])
 
   // JSON events from face-tracking via CameraSender WebSocket
@@ -591,7 +598,8 @@ export default function LectureView() {
       setDetections([])
       setAttendance({})
       if (lastObjectUrl.current) { try { URL.revokeObjectURL(lastObjectUrl.current) } catch {} ; lastObjectUrl.current = null }
-      setImageSrc(null)
+      if (imgRef.current) imgRef.current.src = ''
+      setHasFrame(false)
     }
   }
 
@@ -687,11 +695,9 @@ export default function LectureView() {
           </div>
 
           <div className="video-frame large">
-            {imageSrc ? (
-              <img ref={imgRef} src={imageSrc} alt="frame" className="video-img" />
-            ) : null}
+            <img ref={imgRef} alt="frame" className="video-img" style={{ display: hasFrame ? '' : 'none' }} />
             <canvas ref={canvasRef} className="video-canvas" />
-            {!imageSrc && status !== 'running' && (
+            {!hasFrame && status !== 'running' && (
               <div className="video-placeholder">Нет видео — нажмите «Начать лекцию»</div>
             )}
           </div>
