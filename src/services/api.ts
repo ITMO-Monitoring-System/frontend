@@ -58,10 +58,11 @@ export const addRole = (payload: {
   role: string
 }) => api.post('/api/user/admin/roles', payload)
 
-export const listUsers = () => api.get<User[]>('/users')
+export const listUsers = (params?: { limit?: number; offset?: number; role?: string }) =>
+  api.get<{ users: Array<{ isu: string; first_name: string; last_name: string }> }>('/api/users', { params })
 
 export const getUser = (userId: string) => api.get<User>(`/users/${encodeURIComponent(userId)}`)
-export const deleteUser = (userId: string) => api.delete(`/users/${encodeURIComponent(userId)}`)
+export const deleteUser = (isu: string) => api.delete(`/api/users/${encodeURIComponent(isu)}`)
 
 export const listDepartments = (params?: { limit?: number; offset?: number }) =>
   api.get<{ departments: Department[]; has_more: boolean }>('/api/departments', { params })
@@ -79,6 +80,18 @@ export const getGroupByCode = (code: string) =>
   api.get<Group>(`/api/groups/${encodeURIComponent(code)}`)
 
 export const listGroups = () => api.get('/groups')
+
+export const createDepartment = (payload: { code: string; name: string; alias?: string }) =>
+  api.post<{ id: number; code: string; name: string; alias?: string }>('/api/departments', payload)
+
+export const deleteDepartment = (id: number) =>
+  api.delete(`/api/departments/${encodeURIComponent(String(id))}`)
+
+export const createGroup = (payload: { code: string; department_id: number }) =>
+  api.post<{ code: string; department_id: number }>('/api/groups', payload)
+
+export const deleteGroup = (code: string) =>
+  api.delete(`/api/groups/${encodeURIComponent(code)}`)
 
 export const removeUserFromGroup = (groupId: string, isu: string) =>
   api.post(`/groups/${encodeURIComponent(groupId)}/removeUser`, { isu })
@@ -158,6 +171,9 @@ export const listSubjects = (params?: { limit?: number; offset?: number }) =>
 
 export const createSubject = (payload: { name: string }) =>
   api.post<Subject>('/api/subjects', payload)
+
+export const deleteSubject = (id: number) =>
+  api.delete(`/api/subjects/${encodeURIComponent(String(id))}`)
 
 export const getSubjectByName = (name: string) =>
   api.get<Subject>(`/api/subjects/by-name/${encodeURIComponent(name)}`)
