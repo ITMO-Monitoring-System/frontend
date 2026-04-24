@@ -8,9 +8,13 @@ services:
     networks:
       - default
       - backend
+      - face_tracking
 
 networks:
   default: {}
   backend:
     external: true
     name: backend_default
+  face_tracking:
+    external: true
+    name: face-tracking_default
