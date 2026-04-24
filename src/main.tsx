@@ -7,6 +7,7 @@ import './index.css';
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter
+      basename="/fizon"
       future={{
         v7_relativeSplatPath: true,
         v7_startTransition: true,
