@@ -27,7 +27,7 @@ export default function AdminPanel() {
   const [subjects, setSubjects] = useState<Array<{ id: number; name: string }>>([])
   const [groups, setGroups] = useState<Array<{ code: string; department_id?: number; name?: string }>>([])
   const [studentsInGroup, setStudentsInGroup] = useState<string[]>([])
-  const [usersList, setUsersList] = useState<Array<{ isu: string; first_name: string; last_name: string }>>([])
+  const [usersList, setUsersList] = useState<Array<{ isu: string; first_name: string; last_name: string; roles: string[] }>>([])
   const [busy, setBusy] = useState(false)
 
   // create user
@@ -412,48 +412,55 @@ export default function AdminPanel() {
             <div className="bind-col">
               <label>Направление</label>
               <select value={bindDept} onChange={e => setBindDept(e.target.value === '' ? '' : Number(e.target.value))}>
-                <option value="">-- выберите направление --</option>
+                <option value="">— выберите направление —</option>
                 {departments.map(d => <option key={d.id} value={d.id}>{d.name || d.code || d.alias || d.id}</option>)}
               </select>
 
-              <label style={{ marginTop: 8 }}>Группа</label>
-              <select value={bindGroup} onChange={e => setBindGroup(e.target.value)}>
-                <option value="">-- выберите группу --</option>
-                {groups.map(g => (
-                  <option key={g.code} value={g.code}>{g.name || g.code}</option>
-                ))}
-              </select>
+              <label>Группа</label>
+              <div className="bind-group-row">
+                <select value={bindGroup} onChange={e => setBindGroup(e.target.value)} style={{ flex: 1 }}>
+                  <option value="">— выберите группу —</option>
+                  {groups.map(g => (
+                    <option key={g.code} value={g.code}>{g.name || g.code}</option>
+                  ))}
+                </select>
+                {bindGroup && (
+                  <button disabled={busy} className="btn small danger" onClick={() => handleDeleteGroup(bindGroup)} type="button">Удалить</button>
+                )}
+              </div>
 
-              {bindGroup && (
-                <div style={{ marginTop: 4 }}>
-                  <button disabled={busy} className="btn small danger" onClick={() => handleDeleteGroup(bindGroup)} type="button">Удалить группу</button>
-                </div>
-              )}
-
-              <label style={{ marginTop: 8 }}>ИСУ (число)</label>
-              <input value={bindIsu} onChange={e => setBindIsu(e.target.value.replace(/\D/g, ''))} />
+              <label>ИСУ студента</label>
+              <input
+                value={bindIsu}
+                onChange={e => setBindIsu(e.target.value.replace(/\D/g, ''))}
+                placeholder="Введите ИСУ"
+              />
 
               <div className="actions">
                 <button disabled={busy} className="btn primary" onClick={handleBindStudent} type="button">Привязать</button>
-                <button disabled={busy} className="btn danger" onClick={() => handleUnbindStudent()} type="button">Отвязать по ИСУ</button>
+                <button disabled={busy} className="btn danger" onClick={() => handleUnbindStudent()} type="button">Отвязать</button>
               </div>
             </div>
 
             <div className="bind-col">
-              <h4 className="subtitle">Студенты в группе</h4>
-              <div className="students-list">
-                {bindGroup ? (
-                  studentsInGroup.length ? (
-                    studentsInGroup.map(s => (
-                      <div key={s} className="student-row">
-                        <div className="student-isu">{s}</div>
-                        <div>
-                          <button disabled={busy} className="btn small" onClick={() => handleUnbindStudent(s)} type="button">Удалить</button>
-                        </div>
-                      </div>
-                    ))
-                  ) : <div className="muted">Список пуст</div>
-                ) : <div className="muted">Выберите группу</div>}
+              <div className="students-panel">
+                <div className="students-panel-header">
+                  <span>Студенты в группе</span>
+                  {bindGroup && <span className="students-count">{studentsInGroup.length}</span>}
+                </div>
+                <div className="students-list">
+                  {!bindGroup
+                    ? <div className="muted">Выберите группу</div>
+                    : studentsInGroup.length === 0
+                      ? <div className="muted">Список пуст</div>
+                      : studentsInGroup.map(s => (
+                          <div key={s} className="student-row">
+                            <span className="student-isu">{s}</span>
+                            <button disabled={busy} className="btn small danger" onClick={() => handleUnbindStudent(s)} type="button">✕</button>
+                          </div>
+                        ))
+                  }
+                </div>
               </div>
             </div>
           </div>
@@ -494,7 +501,14 @@ export default function AdminPanel() {
           <ul className="list small">
             {usersList.map(u => (
               <li key={u.isu} className="list-row">
-                <span>{u.last_name} {u.first_name} <span className="muted">({u.isu})</span></span>
+                <div className="user-info">
+                  <span className="user-name">{u.last_name} {u.first_name} <span className="muted">({u.isu})</span></span>
+                  <div className="role-badges">
+                    {(u.roles ?? []).map(r => (
+                      <span key={r} className={`role-badge role-${r}`}>{r}</span>
+                    ))}
+                  </div>
+                </div>
                 <button disabled={busy} className="btn small danger" onClick={() => handleDeleteUser(u.isu)} type="button">Удалить</button>
               </li>
             ))}

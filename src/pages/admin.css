@@ -56,6 +56,28 @@ outline:none;
 .admin-main > .admin-card:nth-child(3) .bind-col input,
 .admin-main > .admin-card:nth-child(3) .bind-col select{padding:9px}
 
+/* bind group row */
+.bind-group-row{display:flex;gap:8px;align-items:center}
+.bind-col{gap:6px}
+
+/* students panel */
+.students-panel{display:flex;flex-direction:column;height:100%}
+.students-panel-header{display:flex;align-items:center;justify-content:space-between;padding:0 2px 8px;font-size:13px;font-weight:600;color:#374151;border-bottom:1px solid #edf2f7}
+.students-count{background:#e0e7ff;color:#3730a3;font-size:12px;font-weight:700;padding:2px 8px;border-radius:20px}
+.students-list{flex:1;margin-top:8px;max-height:240px;overflow:auto;display:flex;flex-direction:column;gap:4px}
+.student-row{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;border-radius:8px;background:#f8fafc;border:1px solid #f1f5f9;transition:background .12s}
+.student-row:hover{background:#f0f4ff}
+.student-isu{font-size:13px;font-weight:600;color:#1e293b}
+
+/* user info with role badges */
+.user-info{display:flex;flex-direction:column;gap:3px;flex:1;overflow:hidden}
+.user-name{font-size:13px;color:#0f172a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.role-badges{display:flex;gap:4px;flex-wrap:wrap}
+.role-badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:.3px}
+.role-admin{background:#fee2e2;color:#991b1b}
+.role-teacher{background:#dbeafe;color:#1e40af}
+.role-student{background:#d1fae5;color:#065f46}
+
 /* responsive */
 @media (max-width:1100px){.admin-main{grid-template-columns:repeat(2,1fr)}}
 @media (max-width:700px){.admin-main{grid-template-columns:1fr}.bind-row{flex-direction:column}}

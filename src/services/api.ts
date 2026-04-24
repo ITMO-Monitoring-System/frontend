@@ -59,7 +59,7 @@ export const addRole = (payload: {
 }) => api.post('/api/user/admin/roles', payload)
 
 export const listUsers = (params?: { limit?: number; offset?: number; role?: string }) =>
-  api.get<{ users: Array<{ isu: string; first_name: string; last_name: string }> }>('/api/users', { params })
+  api.get<{ users: Array<{ isu: string; first_name: string; last_name: string; roles: string[] }> }>('/api/users', { params })
 
 export const getUser = (userId: string) => api.get<User>(`/users/${encodeURIComponent(userId)}`)
 export const deleteUser = (isu: string) => api.delete(`/api/users/${encodeURIComponent(isu)}`)
