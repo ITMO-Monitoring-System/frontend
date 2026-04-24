@@ -36,7 +36,29 @@ const DEFAULT_LECTURE_DURATION_MINUTES = (() => {
   return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : 90
 })()
 
+const PRESENCE_MIN_SECONDS = 60
+const DEFAULT_GAP_SECONDS = 180
+const GAP_SECONDS_MIN = 5
+const GAP_SECONDS_MAX = 600
+
+const GAP_SECONDS_HELP =
+  'Разрывы между соседними детекциями длиннее этого значения не засчитываются в присутствие. ' +
+  'При 180 сек студент может отойти на 3 минуты (туалет, попить) без потери времени. ' +
+  'Увеличьте до 300 сек (5 мин), чтобы быть мягче, или уменьшите для строгого учёта. ' +
+  'Слишком большое значение позволит студентам «терять» часть лекции незамеченно.'
+
+const compareStudents = (a: TeacherStudent, b: TeacherStudent) =>
+  (a.last_name || '').localeCompare(b.last_name || '', 'ru') ||
+  (a.first_name || '').localeCompare(b.first_name || '', 'ru') ||
+  (a.patronymic || '').localeCompare(b.patronymic || '', 'ru') ||
+  (a.isu || '').localeCompare(b.isu || '')
+
 const clampPercent = (value: number) => Math.max(0, Math.min(100, value))
+
+const clampGapSeconds = (value: number) => {
+  if (!Number.isFinite(value)) return DEFAULT_GAP_SECONDS
+  return Math.max(GAP_SECONDS_MIN, Math.min(GAP_SECONDS_MAX, Math.round(value)))
+}
 
 const formatSeconds = (seconds: number) => {
   if (!seconds || seconds <= 0) return '0s'
@@ -54,12 +76,12 @@ const getStatusByPercent = (percent: number, presentThreshold: number, partialTh
   return { label: 'Ниже порога', className: 'absent' }
 }
 
-const fetchAllGroupStudents = async (lectureId: number, groupCode: string) => {
+const fetchAllGroupStudents = async (lectureId: number, groupCode: string, gapSeconds: number) => {
   const pageSize = 200
   const first = await getLectureGroupStudents(lectureId, groupCode, {
     page: 1,
     page_size: pageSize,
-    gap_seconds: 1,
+    gap_seconds: gapSeconds,
   })
   const items = [...(first.data.items || [])]
   const total = first.data.meta?.total ?? items.length
@@ -69,7 +91,7 @@ const fetchAllGroupStudents = async (lectureId: number, groupCode: string) => {
     const next = await getLectureGroupStudents(lectureId, groupCode, {
       page,
       page_size: pageSize,
-      gap_seconds: 1,
+      gap_seconds: gapSeconds,
     })
     items.push(...(next.data.items || []))
   }
@@ -93,6 +115,7 @@ const TeacherAnalytics: React.FC = () => {
   const [lectureDurationMinutes, setLectureDurationMinutes] = useState(DEFAULT_LECTURE_DURATION_MINUTES)
   const [presentThresholdInput, setPresentThresholdInput] = useState(80)
   const [partialThresholdInput, setPartialThresholdInput] = useState(30)
+  const [gapSeconds, setGapSeconds] = useState<number>(DEFAULT_GAP_SECONDS)
   const [subjectSummarySeconds, setSubjectSummarySeconds] = useState<number[][]>([])
   const [summaryError, setSummaryError] = useState('')
   const [loading, setLoading] = useState({
@@ -140,7 +163,7 @@ const TeacherAnalytics: React.FC = () => {
           const seconds: number[] = []
 
           for (const group of groups) {
-            const students = await fetchAllGroupStudents(lecture.lecture_id, group.group_code)
+            const students = await fetchAllGroupStudents(lecture.lecture_id, group.group_code, gapSeconds)
             students.forEach(student => {
               seconds.push(Math.max(0, student.present_seconds || 0))
             })
@@ -211,9 +234,10 @@ const TeacherAnalytics: React.FC = () => {
       const response = await getLectureGroupStudents(lectureId, groupCode, {
         page,
         page_size: studentsMeta.page_size,
-        gap_seconds: 1,
+        gap_seconds: gapSeconds,
       })
-      setTeacherStudents(response.data.items || [])
+      const items = [...(response.data.items || [])].sort(compareStudents)
+      setTeacherStudents(items)
       setStudentsMeta(response.data.meta)
     } catch (error) {
       console.error('Ошибка загрузки студентов:', error)
@@ -250,7 +274,15 @@ const TeacherAnalytics: React.FC = () => {
       setTeacherStudents([])
       setStudentsMeta(prev => ({ ...prev, total: 0 }))
     }
-  }, [selectedLectureId, selectedGroupCode])
+    // re-fetch when gapSeconds changes — server recomputes presence with new threshold
+  }, [selectedLectureId, selectedGroupCode, gapSeconds])
+
+  useEffect(() => {
+    // recompute subject-wide summary when gapSeconds changes
+    if (teacherLectures.length > 0) {
+      void loadSubjectSummary(teacherLectures)
+    }
+  }, [gapSeconds])
 
   const summary = useMemo(() => {
     const totalLectures = subjectSummarySeconds.length
@@ -294,6 +326,7 @@ const TeacherAnalytics: React.FC = () => {
     }
 
     const headers = [
+      'Был',
       'ISU',
       'Фамилия',
       'Имя',
@@ -305,12 +338,12 @@ const TeacherAnalytics: React.FC = () => {
     ]
 
     const rows = teacherStudents.map(student => {
-      const attendancePercent = Math.min(
-        100,
-        (Math.max(0, student.present_seconds || 0) / lectureDurationSeconds) * 100
-      )
+      const seconds = Math.max(0, student.present_seconds || 0)
+      const attendancePercent = Math.min(100, (seconds / lectureDurationSeconds) * 100)
       const status = getStatusByPercent(attendancePercent, presentThreshold, partialThreshold)
+      const wasPresent = seconds >= PRESENCE_MIN_SECONDS
       return [
+        wasPresent ? 'был' : 'не был',
         student.isu,
         student.last_name,
         student.first_name,
@@ -332,7 +365,7 @@ const TeacherAnalytics: React.FC = () => {
     const url = URL.createObjectURL(blob)
 
     const subjectName = teacherSubjects.find(subject => subject.id === selectedSubjectId)?.name || 'subject'
-    const fileName = `analytics_${subjectName}_lecture_${selectedLectureId}_group_${selectedGroupCode}.csv`
+    const fileName = `analytics_${subjectName}_lecture_${selectedLectureId}_group_${selectedGroupCode}_gap${gapSeconds}s.csv`
 
     link.setAttribute('href', url)
     link.setAttribute('download', fileName)
@@ -443,6 +476,21 @@ const TeacherAnalytics: React.FC = () => {
               onChange={e => setPartialThresholdInput(Number(e.target.value) || 0)}
             />
           </div>
+          <div className="filter-group compact">
+            <label title={GAP_SECONDS_HELP}>
+              Допустимый разрыв (сек) <span style={{ cursor: 'help', opacity: 0.7 }}>ⓘ</span>
+            </label>
+            <input
+              className="filter-input"
+              type="number"
+              min={GAP_SECONDS_MIN}
+              max={GAP_SECONDS_MAX}
+              step={5}
+              value={gapSeconds}
+              onChange={e => setGapSeconds(clampGapSeconds(Number(e.target.value)))}
+              title={GAP_SECONDS_HELP}
+            />
+          </div>
         </div>
       </div>
 
@@ -486,6 +534,7 @@ const TeacherAnalytics: React.FC = () => {
               <table className="analytics-table">
                 <thead>
                   <tr>
+                    <th title={`Был в кадре не менее ${PRESENCE_MIN_SECONDS} секунд`}>Был</th>
                     <th>ISU</th>
                     <th>Фамилия</th>
                     <th>Имя</th>
@@ -497,13 +546,23 @@ const TeacherAnalytics: React.FC = () => {
                 </thead>
                 <tbody>
                   {teacherStudents.map(student => {
-                    const attendancePercent = Math.min(
-                      100,
-                      (Math.max(0, student.present_seconds || 0) / lectureDurationSeconds) * 100
-                    )
+                    const seconds = Math.max(0, student.present_seconds || 0)
+                    const attendancePercent = Math.min(100, (seconds / lectureDurationSeconds) * 100)
                     const status = getStatusByPercent(attendancePercent, presentThreshold, partialThreshold)
+                    const wasPresent = seconds >= PRESENCE_MIN_SECONDS
                     return (
                       <tr key={student.isu}>
+                        <td
+                          className={`presence-mark ${wasPresent ? 'present' : 'absent'}`}
+                          title={wasPresent ? 'Был' : 'Не был'}
+                          style={{
+                            textAlign: 'center',
+                            fontWeight: 700,
+                            color: wasPresent ? '#15803d' : '#b91c1c',
+                          }}
+                        >
+                          {wasPresent ? '✓' : '✗'}
+                        </td>
                         <td>{student.isu}</td>
                         <td>{student.last_name}</td>
                         <td>{student.first_name}</td>

@@ -709,6 +709,14 @@ export default function LectureView() {
             <button className="btn ghost" onClick={() => { setAttendance({}); setDetections([]) }}>Очистить</button>
           </div>
 
+          <div
+            className="muted"
+            style={{ fontSize: 12, padding: '0 8px 8px', lineHeight: 1.4 }}
+            title="Live-время считается от первой детекции до выхода из кадра (окно закрывается после 40 секунд без детекции). В Аналитике используется параметр «Допустимый разрыв» — он может дать другое число."
+          >
+            Живое время в кадре. В Аналитике считается с учётом параметра «Допустимый разрыв» — числа могут отличаться.
+          </div>
+
           <div className="detected-list">
             {Object.values(attendance).length === 0 ? (
               <div className="muted">Пока никого не обнаружено</div>
