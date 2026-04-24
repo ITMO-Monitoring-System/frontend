@@ -43,11 +43,11 @@ frameApi.interceptors.request.use((cfg: any) => {
 
 const startLectureFrame = async (lectureId?: number, body: any = { durable: true, auto_delete: false }) => {
   const lid = lectureId ?? Date.now()
-  return frameApi.post(`/api/lectures/${encodeURIComponent(String(lid))}/start`, body)
+  return frameApi.post(`api/lectures/${encodeURIComponent(String(lid))}/start`, body)
 }
 
 const endLectureFrame = async (lectureId: number, body: any = { if_unused: false, if_empty: false }) => {
-  return frameApi.post(`/api/lectures/${encodeURIComponent(String(lectureId))}/end`, body)
+  return frameApi.post(`api/lectures/${encodeURIComponent(String(lectureId))}/end`, body)
 }
 
 function fmtMs(ms: number) {
