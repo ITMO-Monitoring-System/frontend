@@ -4,7 +4,7 @@ services:
       context: .
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${APP_BIND_PORT:-18081}:80"
+      - "127.0.0.1:${APP_BIND_PORT:-18181}:80"
     networks:
       - default
       - backend
