@@ -2,7 +2,14 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { register, listDepartments, listGroupsByDepartment } from '../services/api'
 import type { Department, Group } from '../types'
+import ConsentModal from '../components/ConsentModal'
+import {
+  PERSONAL_DATA_CONSENT_TITLE,
+  PERSONAL_DATA_CONSENT_TEXT,
+  PERSONAL_DATA_CONSENT_VERSION,
+} from '../legal/consent'
 import './login.css'
+import '../components/consent.css'
 
 export default function RegisterPage() {
   const [isu, setIsu] = useState('')
@@ -20,6 +27,8 @@ export default function RegisterPage() {
   const [groupsLoading, setGroupsLoading] = useState(false)
   const [groupsError, setGroupsError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [pdConsent, setPdConsent] = useState(false)
+  const [consentModalOpen, setConsentModalOpen] = useState(false)
 
   const nav = useNavigate()
 
@@ -74,6 +83,10 @@ export default function RegisterPage() {
       alert('Пароли не совпадают')
       return
     }
+    if (!pdConsent) {
+      alert('Необходимо дать согласие на обработку персональных данных')
+      return
+    }
 
     setSubmitting(true)
     try {
@@ -84,6 +97,7 @@ export default function RegisterPage() {
         patronymic: patronymic || undefined,
         password,
         group_code: selectedGroupCode || undefined,
+        pd_consent_accepted: pdConsent,
       })
       alert('Регистрация успешна! Теперь войдите в систему.')
       nav('/login')
@@ -182,7 +196,25 @@ export default function RegisterPage() {
           </select>
           {groupsError && <div className="login-info">{groupsError}</div>}
 
-          <button className="login-submit" disabled={submitting}>
+          <label className="consent-field">
+            <input
+              type="checkbox"
+              checked={pdConsent}
+              onChange={e => setPdConsent(e.target.checked)}
+            />
+            <span>
+              Я ознакомлен(а) и согласен(на) с{' '}
+              <button
+                type="button"
+                className="consent-link"
+                onClick={() => setConsentModalOpen(true)}
+              >
+                Согласием на обработку персональных данных
+              </button>
+            </span>
+          </label>
+
+          <button className="login-submit" disabled={submitting || !pdConsent}>
             {submitting ? 'Регистрация...' : 'Зарегистрироваться'}
           </button>
         </form>
@@ -191,6 +223,14 @@ export default function RegisterPage() {
           Уже есть аккаунт? <Link to="/login">Войти</Link>
         </div>
       </div>
+
+      <ConsentModal
+        open={consentModalOpen}
+        title={PERSONAL_DATA_CONSENT_TITLE}
+        text={PERSONAL_DATA_CONSENT_TEXT}
+        version={PERSONAL_DATA_CONSENT_VERSION}
+        onClose={() => setConsentModalOpen(false)}
+      />
     </div>
   )
 }

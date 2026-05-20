@@ -18,6 +18,7 @@ type AuthContextValue = {
   token: string | null
   login: (token: string) => Promise<void>
   logout: () => void
+  refresh: () => Promise<void>
   loading: boolean
 }
 
@@ -179,9 +180,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(false)
   }, [])
 
+  const refresh = useCallback(async () => {
+    loadedTokenRef.current = null
+    await loadMe(token)
+  }, [loadMe, token])
+
   const value = useMemo(
-    () => ({ user, token, login, logout, loading }),
-    [user, token, login, logout, loading]
+    () => ({ user, token, login, logout, refresh, loading }),
+    [user, token, login, logout, refresh, loading]
   )
 
   return (

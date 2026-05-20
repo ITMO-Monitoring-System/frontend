@@ -4,11 +4,21 @@ import {
   uploadFaces,
   getVisitSubjects,
   getVisitLecturesBySubject,
+  getConsents,
+  giveBiometricConsent,
+  revokeBiometricConsent,
 } from '../services/api'
 import { AuthContext } from '../contexts/AuthContext'
 import type { Subject as SubjectType } from '../types'
+import ConsentModal from './ConsentModal'
+import {
+  BIOMETRIC_CONSENT_TITLE,
+  BIOMETRIC_CONSENT_TEXT,
+  BIOMETRIC_CONSENT_VERSION,
+} from '../legal/consent'
 import './student-profile.css'
 import './student-visits.css'
+import './consent.css'
 
 type Slot = 'left' | 'center' | 'right'
 
@@ -45,12 +55,33 @@ function StudentFacesUpload() {
   const [previews, setPreviews] = useState<Partial<Record<Slot, string>>>({})
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState<number>(0)
+  const [biometricConsent, setBiometricConsent] = useState<boolean | null>(null)
+  const [consentModalOpen, setConsentModalOpen] = useState(false)
+  const [consentBusy, setConsentBusy] = useState(false)
 
   useEffect(() => {
     return () => {
       Object.values(previews).forEach((url) => {
         if (url) URL.revokeObjectURL(url)
       })
+    }
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
+    getConsents()
+      .then((res) => {
+        if (!mounted) return
+        const active = (res.data?.consents ?? []).some(
+          (c) => c.type === 'biometric' && c.active
+        )
+        setBiometricConsent(active)
+      })
+      .catch(() => {
+        if (mounted) setBiometricConsent(false)
+      })
+    return () => {
+      mounted = false
     }
   }, [])
 
@@ -95,12 +126,7 @@ function StudentFacesUpload() {
     return currentUserIsu.length > 0 && files.left && files.center && files.right
   }
 
-  const handleUpload = async () => {
-    if (!currentUserIsu) {
-      alert('Не удалось определить ISU текущего пользователя')
-      return
-    }
-
+  const doUpload = async () => {
     if (!files.left || !files.center || !files.right) {
       alert('Выберите все три фотографии: левая, фронтальная и правая')
       return
@@ -129,6 +155,7 @@ function StudentFacesUpload() {
       setFiles({})
       setPreviews({})
       setProgress(0)
+      await auth?.refresh()
     } catch (err: any) {
       console.error('Ошибка загрузки фотографий:', err)
       let errorMessage = 'Ошибка загрузки фотографий'
@@ -137,6 +164,61 @@ function StudentFacesUpload() {
       alert(errorMessage)
     } finally {
       setUploading(false)
+    }
+  }
+
+  // Перед загрузкой фото проверяем согласие на обработку биометрии.
+  // Нет согласия → открываем модалку, загрузка идёт после его получения.
+  const handleUpload = () => {
+    if (!currentUserIsu) {
+      alert('Не удалось определить ISU текущего пользователя')
+      return
+    }
+    if (!files.left || !files.center || !files.right) {
+      alert('Выберите все три фотографии: левая, фронтальная и правая')
+      return
+    }
+    if (biometricConsent) {
+      void doUpload()
+    } else {
+      setConsentModalOpen(true)
+    }
+  }
+
+  const handleAcceptBiometricConsent = async () => {
+    setConsentBusy(true)
+    try {
+      await giveBiometricConsent()
+      setBiometricConsent(true)
+      setConsentModalOpen(false)
+      await doUpload()
+    } catch (err) {
+      console.error('Ошибка сохранения согласия:', err)
+      alert('Не удалось сохранить согласие на обработку биометрии')
+    } finally {
+      setConsentBusy(false)
+    }
+  }
+
+  const handleRevokeConsent = async () => {
+    if (
+      !window.confirm(
+        'Отозвать согласие на обработку биометрии? Загруженные фотографии и биометрические данные будут удалены.'
+      )
+    ) {
+      return
+    }
+    setConsentBusy(true)
+    try {
+      await revokeBiometricConsent()
+      setBiometricConsent(false)
+      await auth?.refresh()
+      alert('Согласие отозвано, биометрические данные удалены')
+    } catch (err) {
+      console.error('Ошибка отзыва согласия:', err)
+      alert('Не удалось отозвать согласие')
+    } finally {
+      setConsentBusy(false)
     }
   }
 
@@ -154,6 +236,25 @@ function StudentFacesUpload() {
         {!currentUserIsu ? (
           <div className="error-text" style={{ marginBottom: 8 }}>
             Сессия не определена. Перезайдите в аккаунт.
+          </div>
+        ) : null}
+
+        {biometricConsent === true ? (
+          <div className="consent-status">
+            Согласие на обработку биометрических данных получено.{' '}
+            <button
+              type="button"
+              className="consent-link"
+              onClick={handleRevokeConsent}
+              disabled={consentBusy}
+            >
+              Отозвать согласие
+            </button>
+          </div>
+        ) : biometricConsent === false ? (
+          <div className="consent-status muted">
+            Перед загрузкой фотографий потребуется согласие на обработку
+            биометрических персональных данных.
           </div>
         ) : null}
 
@@ -215,13 +316,24 @@ function StudentFacesUpload() {
           <button
             className="btn primary"
             onClick={handleUpload}
-            disabled={!canUploadAll() || uploading}
+            disabled={!canUploadAll() || uploading || consentBusy}
             type="button"
           >
             {uploading ? 'Загрузка…' : 'Загрузить фотографии'}
           </button>
         </div>
       </div>
+
+      <ConsentModal
+        open={consentModalOpen}
+        title={BIOMETRIC_CONSENT_TITLE}
+        text={BIOMETRIC_CONSENT_TEXT}
+        version={BIOMETRIC_CONSENT_VERSION}
+        onClose={() => setConsentModalOpen(false)}
+        onAccept={handleAcceptBiometricConsent}
+        acceptLabel="Принять и загрузить"
+        busy={consentBusy}
+      />
     </div>
   )
 }

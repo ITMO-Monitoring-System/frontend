@@ -37,7 +37,25 @@ export const register = (payload: {
   patronymic?: string
   password: string
   group_code?: string
+  pd_consent_accepted: boolean
 }) => api.post<{ success: boolean }>('/api/auth/register', payload)
+
+export type ConsentRecord = {
+  type: string
+  doc_version: string
+  accepted_at: string
+  revoked_at?: string
+  active: boolean
+}
+
+export const getConsents = () =>
+  api.get<{ isu: string; consents: ConsentRecord[] }>('/api/user/consents')
+
+export const giveBiometricConsent = () =>
+  api.post<{ success: boolean }>('/api/user/consents/biometric')
+
+export const revokeBiometricConsent = () =>
+  api.delete<{ success: boolean }>('/api/user/consents/biometric')
 
 export const updateProfile = (userId: string, payload: Partial<User>) =>
   api.put(`/users/${encodeURIComponent(userId)}`, payload)

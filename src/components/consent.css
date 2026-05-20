@@ -1,0 +1,192 @@
+.consent-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 10, 32, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 1000;
+}
+
+.consent-modal {
+  width: 100%;
+  max-width: 640px;
+  max-height: 88vh;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(3, 10, 32, 0.28);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.consent-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.consent-modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  color: #0f172a;
+}
+
+.consent-close {
+  border: none;
+  background: transparent;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+  color: #64748b;
+  padding: 0 4px;
+}
+
+.consent-close:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.consent-modal-body {
+  padding: 18px 22px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1e293b;
+  flex: 1;
+}
+
+.consent-version {
+  padding: 8px 22px;
+  font-size: 12px;
+  color: #94a3b8;
+  border-top: 1px solid #f1f5f9;
+}
+
+.consent-modal-footer {
+  padding: 16px 22px;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.consent-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: #334155;
+  cursor: pointer;
+}
+
+.consent-check input {
+  margin-top: 2px;
+}
+
+.consent-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.consent-btn {
+  height: 38px;
+  padding: 0 18px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.consent-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.consent-btn-primary {
+  background: #fde68a;
+  color: #0f172a;
+}
+
+.consent-btn-ghost {
+  background: #fff;
+  border-color: #cbd5e1;
+  color: #334155;
+}
+
+/* Ссылка-кнопка для открытия документа из формы */
+.consent-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #2563eb;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* Чекбокс согласия в форме регистрации */
+.consent-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: #334155;
+  text-align: left;
+  margin-top: 4px;
+}
+
+.consent-field input {
+  margin-top: 2px;
+}
+
+/* Статус биометрического согласия в профиле студента */
+.consent-status {
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  background: #dcfce7;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+}
+
+.consent-status.muted {
+  background: #f1f5f9;
+  color: #475569;
+  border-color: #e2e8f0;
+}
+
+/* Отдельная страница /consent */
+.consent-page {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+.consent-doc {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 22px;
+  margin-bottom: 18px;
+}
+
+.consent-doc h2 {
+  margin: 0 0 12px;
+  font-size: 19px;
+  color: #0f172a;
+}
+
+.consent-doc-text {
+  white-space: pre-wrap;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1e293b;
+}

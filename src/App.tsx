@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, AuthContext } from './contexts/AuthContext'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
+import ConsentPage from './pages/ConsentPage'
 import LectureView from './components/LectureView'
 import StudentProfile from './components/StudentProfile'
 import HeaderBar from './components/HeaderBar'
@@ -34,6 +35,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        <Route path="/consent" element={<ConsentPage />} />
         <Route
           path="/"
           element={
