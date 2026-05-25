@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useState } from 'react'
+import { useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { AxiosProgressEvent } from 'axios'
 import {
   uploadFaces,
@@ -7,6 +7,8 @@ import {
   getConsents,
   giveBiometricConsent,
   revokeBiometricConsent,
+  getMyFacesMeta,
+  getMyFaceBlob,
 } from '../services/api'
 import { AuthContext } from '../contexts/AuthContext'
 import type { Subject as SubjectType } from '../types'
@@ -48,22 +50,55 @@ function PhotoStatusBadge() {
   )
 }
 
+const SLOT_LABELS: Record<Slot, string> = {
+  left: 'Левая',
+  center: 'Фронтальная',
+  right: 'Правая',
+}
+
+type SavedFace = { url: string; blob: Blob; updatedAt: string | null }
+
+function formatUpdated(iso: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 function StudentFacesUpload() {
   const auth = useContext(AuthContext)
   const currentUserIsu = (auth?.user?.isu ?? auth?.user?.id ?? '').toString().trim()
   const [files, setFiles] = useState<Partial<Record<Slot, File>>>({})
   const [previews, setPreviews] = useState<Partial<Record<Slot, string>>>({})
+  const [saved, setSaved] = useState<Partial<Record<Slot, SavedFace>>>({})
+  const [savedLoading, setSavedLoading] = useState<boolean>(false)
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState<number>(0)
   const [biometricConsent, setBiometricConsent] = useState<boolean | null>(null)
   const [consentModalOpen, setConsentModalOpen] = useState(false)
   const [consentBusy, setConsentBusy] = useState(false)
+  const [lightbox, setLightbox] = useState<Slot | null>(null)
+
+  // Хранения objectURL для корректной очистки на анмаунте.
+  const previewsRef = useRef(previews)
+  const savedRef = useRef(saved)
+  useEffect(() => {
+    previewsRef.current = previews
+  }, [previews])
+  useEffect(() => {
+    savedRef.current = saved
+  }, [saved])
 
   useEffect(() => {
     return () => {
-      Object.values(previews).forEach((url) => {
-        if (url) URL.revokeObjectURL(url)
-      })
+      Object.values(previewsRef.current).forEach((url) => url && URL.revokeObjectURL(url))
+      Object.values(savedRef.current).forEach((s) => s && URL.revokeObjectURL(s.url))
     }
   }, [])
 
@@ -85,6 +120,45 @@ function StudentFacesUpload() {
     }
   }, [])
 
+  const loadSavedFaces = async () => {
+    setSavedLoading(true)
+    try {
+      const metaRes = await getMyFacesMeta()
+      const meta = metaRes.data
+      if (!meta?.has_faces) {
+        Object.values(savedRef.current).forEach((s) => s && URL.revokeObjectURL(s.url))
+        setSaved({})
+        return
+      }
+      const slots: Slot[] = ['left', 'center', 'right']
+      const fetched = await Promise.all(
+        slots.map(async (slot) => {
+          const res = await getMyFaceBlob(slot)
+          const blob = res.data as Blob
+          return [slot, { url: URL.createObjectURL(blob), blob, updatedAt: meta.updated_at ?? null }] as const
+        })
+      )
+      // Revoke предыдущие URL перед заменой.
+      Object.values(savedRef.current).forEach((s) => s && URL.revokeObjectURL(s.url))
+      const next: Partial<Record<Slot, SavedFace>> = {}
+      for (const [slot, face] of fetched) next[slot] = face
+      setSaved(next)
+    } catch (err) {
+      console.error('Не удалось загрузить сохранённые фотографии:', err)
+    } finally {
+      setSavedLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (biometricConsent) {
+      void loadSavedFaces()
+    } else {
+      Object.values(savedRef.current).forEach((s) => s && URL.revokeObjectURL(s.url))
+      setSaved({})
+    }
+  }, [biometricConsent])
+
   const onSelect = (slot: Slot, file: File | null) => {
     if (!file) return
 
@@ -96,25 +170,19 @@ function StudentFacesUpload() {
 
     const previewUrl = URL.createObjectURL(file)
 
-    if (previews[slot]) {
-      URL.revokeObjectURL(previews[slot]!)
-    }
+    if (previews[slot]) URL.revokeObjectURL(previews[slot]!)
 
     setFiles((prev) => ({ ...prev, [slot]: file }))
     setPreviews((prev) => ({ ...prev, [slot]: previewUrl }))
   }
 
   const removeSlot = (slot: Slot) => {
-    if (previews[slot]) {
-      URL.revokeObjectURL(previews[slot]!)
-    }
-
+    if (previews[slot]) URL.revokeObjectURL(previews[slot]!)
     setFiles((prev) => {
       const copy = { ...prev }
       delete copy[slot]
       return copy
     })
-
     setPreviews((prev) => {
       const copy = { ...prev }
       delete copy[slot]
@@ -122,22 +190,47 @@ function StudentFacesUpload() {
     })
   }
 
-  const canUploadAll = () => {
-    return currentUserIsu.length > 0 && files.left && files.center && files.right
+  const hasNewFiles = useMemo(() => Object.keys(files).length > 0, [files])
+  const hasAllSaved = useMemo(
+    () => !!(saved.left && saved.center && saved.right),
+    [saved]
+  )
+  const hasAllNewFiles = useMemo(
+    () => !!(files.left && files.center && files.right),
+    [files]
+  )
+
+  // Сохранение возможно если:
+  //  - есть хотя бы один новый файл И уже все три сохранены (заменяем недостающие из saved)
+  //  - либо есть все три новых файла (первичная загрузка)
+  const canSubmit =
+    currentUserIsu.length > 0 &&
+    !uploading &&
+    !consentBusy &&
+    ((hasNewFiles && hasAllSaved) || hasAllNewFiles)
+
+  const buildFileForSlot = async (slot: Slot): Promise<File> => {
+    if (files[slot]) return files[slot]!
+    const s = saved[slot]
+    if (!s) throw new Error(`нет данных для слота ${slot}`)
+    const type = s.blob.type || 'image/jpeg'
+    const ext = type === 'image/png' ? 'png' : 'jpg'
+    return new File([s.blob], `${slot}.${ext}`, { type })
   }
 
   const doUpload = async () => {
-    if (!files.left || !files.center || !files.right) {
-      alert('Выберите все три фотографии: левая, фронтальная и правая')
-      return
-    }
-
     setUploading(true)
     setProgress(0)
 
     try {
+      const [left, center, right] = await Promise.all([
+        buildFileForSlot('left'),
+        buildFileForSlot('center'),
+        buildFileForSlot('right'),
+      ])
+
       await uploadFaces(
-        { left: files.left, right: files.right, center: files.center },
+        { left, right, center },
         (ev: AxiosProgressEvent) => {
           const loaded = ev.loaded ?? 0
           const total = ev.total ?? 0
@@ -146,16 +239,11 @@ function StudentFacesUpload() {
         }
       )
 
-      alert('Фотографии успешно загружены')
-
-      Object.values(previews).forEach((url) => {
-        if (url) URL.revokeObjectURL(url)
-      })
-
+      Object.values(previews).forEach((url) => url && URL.revokeObjectURL(url))
       setFiles({})
       setPreviews({})
       setProgress(0)
-      await auth?.refresh()
+      await Promise.all([auth?.refresh(), loadSavedFaces()])
     } catch (err: any) {
       console.error('Ошибка загрузки фотографий:', err)
       let errorMessage = 'Ошибка загрузки фотографий'
@@ -167,17 +255,12 @@ function StudentFacesUpload() {
     }
   }
 
-  // Перед загрузкой фото проверяем согласие на обработку биометрии.
-  // Нет согласия → открываем модалку, загрузка идёт после его получения.
   const handleUpload = () => {
     if (!currentUserIsu) {
       alert('Не удалось определить ISU текущего пользователя')
       return
     }
-    if (!files.left || !files.center || !files.right) {
-      alert('Выберите все три фотографии: левая, фронтальная и правая')
-      return
-    }
+    if (!canSubmit) return
     if (biometricConsent) {
       void doUpload()
     } else {
@@ -212,6 +295,8 @@ function StudentFacesUpload() {
     try {
       await revokeBiometricConsent()
       setBiometricConsent(false)
+      Object.values(savedRef.current).forEach((s) => s && URL.revokeObjectURL(s.url))
+      setSaved({})
       await auth?.refresh()
       alert('Согласие отозвано, биометрические данные удалены')
     } catch (err) {
@@ -222,12 +307,22 @@ function StudentFacesUpload() {
     }
   }
 
+  const submitLabel = hasAllSaved
+    ? uploading
+      ? 'Сохранение…'
+      : 'Сохранить изменения'
+    : uploading
+      ? 'Загрузка…'
+      : 'Загрузить фотографии'
+
   return (
     <div className="faces-card lowered">
       <div className="faces-header">
-        <h3 className="faces-title">Загрузить мои фотографии</h3>
+        <h3 className="faces-title">Мои фотографии</h3>
         <div className="faces-sub">
-          Загрузите 3 фото: левая, фронтальная, правая
+          {hasAllSaved
+            ? 'Можно заменить любую из фотографий — остальные останутся прежними'
+            : 'Загрузите 3 фото: левая, фронтальная, правая'}
           {currentUserIsu ? ` (ISU ${currentUserIsu})` : ''}
         </div>
       </div>
@@ -259,48 +354,77 @@ function StudentFacesUpload() {
         ) : null}
 
         <div className="slots-row">
-          {(['left', 'center', 'right'] as Slot[]).map((slot) => (
-            <div className="slot" key={slot}>
-              <div className="slot-label">
-                {slot === 'left' && 'Левая'}
-                {slot === 'center' && 'Фронтальная'}
-                {slot === 'right' && 'Правая'}
-              </div>
-              <div className="slot-thumb">
-                {files[slot] ? (
-                  <div className="thumb">
-                    <img src={previews[slot]} alt={slot} className="thumb-img" />
-                    <button
-                      className="thumb-remove"
-                      onClick={() => removeSlot(slot)}
-                      disabled={uploading}
-                      type="button"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ) : (
-                  <label className="upload-box">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      disabled={uploading}
-                      onChange={(e) => onSelect(slot, e.target.files?.[0] || null)}
-                      style={{ display: 'none' }}
-                    />
-                    <div className="upload-inner">
-                      <div className="upload-plus">+</div>
-                      <div className="upload-text">
-                        {slot === 'left' && 'Левая'}
-                        {slot === 'center' && 'Фронт'}
-                        {slot === 'right' && 'Правая'}
+          {(['left', 'center', 'right'] as Slot[]).map((slot) => {
+            const newFile = files[slot]
+            const savedFace = saved[slot]
+            const previewUrl = newFile ? previews[slot] : savedFace?.url
+            const isNew = !!newFile
+            const isSaved = !newFile && !!savedFace
+
+            return (
+              <div className="slot" key={slot}>
+                <div className="slot-label">{SLOT_LABELS[slot]}</div>
+                <div className="slot-thumb">
+                  {previewUrl ? (
+                    <div className={`thumb ${isNew ? 'thumb-new' : 'thumb-saved'}`}>
+                      <img
+                        src={previewUrl}
+                        alt={slot}
+                        className="thumb-img"
+                        onClick={() => setLightbox(slot)}
+                      />
+                      <div className={`thumb-badge ${isNew ? 'badge-new' : 'badge-saved'}`}>
+                        {isNew ? 'Новое' : 'Сохранено'}
                       </div>
+                      {isNew ? (
+                        <button
+                          className="thumb-remove"
+                          onClick={() => removeSlot(slot)}
+                          disabled={uploading}
+                          type="button"
+                          title="Отменить замену"
+                          aria-label="Отменить замену"
+                        >
+                          ×
+                        </button>
+                      ) : null}
+                      {isSaved ? (
+                        <label className="thumb-replace">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            disabled={uploading}
+                            onChange={(e) => onSelect(slot, e.target.files?.[0] || null)}
+                            style={{ display: 'none' }}
+                          />
+                          Заменить
+                        </label>
+                      ) : null}
                     </div>
-                  </label>
-                )}
+                  ) : savedLoading ? (
+                    <div className="thumb thumb-skeleton" aria-busy="true" />
+                  ) : (
+                    <label className="upload-box">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        disabled={uploading}
+                        onChange={(e) => onSelect(slot, e.target.files?.[0] || null)}
+                        style={{ display: 'none' }}
+                      />
+                      <div className="upload-inner">
+                        <div className="upload-plus">+</div>
+                        <div className="upload-text">{SLOT_LABELS[slot]}</div>
+                      </div>
+                    </label>
+                  )}
+                </div>
+                {isSaved && savedFace?.updatedAt ? (
+                  <div className="slot-meta">Обновлено {formatUpdated(savedFace.updatedAt)}</div>
+                ) : null}
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
 
         {uploading && (
@@ -316,13 +440,45 @@ function StudentFacesUpload() {
           <button
             className="btn primary"
             onClick={handleUpload}
-            disabled={!canUploadAll() || uploading || consentBusy}
+            disabled={!canSubmit}
             type="button"
           >
-            {uploading ? 'Загрузка…' : 'Загрузить фотографии'}
+            {submitLabel}
           </button>
+          {hasNewFiles && !uploading ? (
+            <button
+              className="btn ghost"
+              type="button"
+              onClick={() => {
+                Object.values(previews).forEach((url) => url && URL.revokeObjectURL(url))
+                setFiles({})
+                setPreviews({})
+              }}
+            >
+              Отменить изменения
+            </button>
+          ) : null}
         </div>
       </div>
+
+      {lightbox ? (
+        <div className="faces-lightbox" onClick={() => setLightbox(null)}>
+          <img
+            src={(files[lightbox] ? previews[lightbox] : saved[lightbox]?.url) || ''}
+            alt={lightbox}
+            className="faces-lightbox-img"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            className="faces-lightbox-close"
+            type="button"
+            onClick={() => setLightbox(null)}
+            aria-label="Закрыть"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
 
       <ConsentModal
         open={consentModalOpen}

@@ -225,6 +225,18 @@ export const uploadFaces = (
 export const listFaces = (userIdOrIsu: string) =>
   api.get<Face[]>(`/users/${encodeURIComponent(userIdOrIsu)}/faces`)
 
+export type FacesMeta = {
+  has_faces: boolean
+  updated_at?: string
+  slots?: Array<'left' | 'center' | 'right'>
+}
+
+export const getMyFacesMeta = () =>
+  api.get<FacesMeta>('/api/user/faces/me/meta')
+
+export const getMyFaceBlob = (slot: 'left' | 'center' | 'right') =>
+  api.get<Blob>(`/api/user/faces/me/${slot}`, { responseType: 'blob' })
+
 export const deleteFace = (userIdOrIsu: string, faceId: string) =>
   api.delete(`/users/${encodeURIComponent(userIdOrIsu)}/faces/${encodeURIComponent(faceId)}`)
 
