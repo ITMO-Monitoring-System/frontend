@@ -13,10 +13,12 @@ type Props = {
   idealWidth?: number
   idealHeight?: number
   initialFps?: number
-  /** Called when an annotated JPEG frame is received back from face-tracking */
-  onAnnotatedFrame?: (blob: Blob) => void
   /** Called when a JSON event is received from face-tracking (auto_publish, recognize_result, error) */
   onServerEvent?: (event: any) => void
+  /** Called with normalized bbox-ы лиц от face-tracking (тип "faces"). Заменяет старый onAnnotatedFrame. */
+  onLocalDetections?: (faces: [number, number, number, number][], frameWh: [number, number]) => void
+  /** Called when the internal MediaStream attaches/detaches — для отображения live-видео в родителе. */
+  onStream?: (stream: MediaStream | null) => void
   /** Whether the sender should be active (controlled mode) */
   active?: boolean
 }
@@ -32,8 +34,9 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
   idealWidth = 1280,
   idealHeight = 720,
   initialFps = 5,
-  onAnnotatedFrame,
   onServerEvent,
+  onLocalDetections,
+  onStream,
   active,
 }, ref) {
   const {
@@ -56,10 +59,26 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
   const [localError, setLocalError] = useState('')
   const bufferedThreshold = 4_000_000
 
-  const onAnnotatedFrameRef = useRef(onAnnotatedFrame)
-  onAnnotatedFrameRef.current = onAnnotatedFrame
   const onServerEventRef = useRef(onServerEvent)
   onServerEventRef.current = onServerEvent
+  const onLocalDetectionsRef = useRef(onLocalDetections)
+  onLocalDetectionsRef.current = onLocalDetections
+  const onStreamRef = useRef(onStream)
+  onStreamRef.current = onStream
+
+  // Прокидываем MediaStream наружу — родитель показывает live-video, а CameraSender
+  // продолжает использовать тот же поток для захвата кадров в canvas.
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    const handler = () => onStreamRef.current?.((v.srcObject as MediaStream | null) ?? null)
+    handler()
+    v.addEventListener('loadedmetadata', handler)
+    return () => {
+      v.removeEventListener('loadedmetadata', handler)
+      onStreamRef.current?.(null)
+    }
+  }, [activeDeviceId])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -113,16 +132,18 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
         setStatus('error')
       }
       socket.onmessage = (event) => {
-        // Binary = annotated JPEG frame from face-tracking
-        if (event.data instanceof ArrayBuffer) {
-          const blob = new Blob([event.data], { type: 'image/jpeg' })
-          onAnnotatedFrameRef.current?.(blob)
-          return
-        }
-        // Text = JSON event from face-tracking
+        // Бинарные сообщения от сервера больше не приходят (annotated JPEG отключён).
+        // Игнорируем на случай обратной совместимости со старой версией face-tracking.
+        if (event.data instanceof ArrayBuffer) return
+
         if (typeof event.data === 'string') {
           try {
             const parsed = JSON.parse(event.data)
+            if (parsed?.type === 'faces' && Array.isArray(parsed.faces)) {
+              const fwh: [number, number] = Array.isArray(parsed.frame_wh) ? parsed.frame_wh : [0, 0]
+              onLocalDetectionsRef.current?.(parsed.faces as [number, number, number, number][], fwh)
+              return
+            }
             onServerEventRef.current?.(parsed)
           } catch {
             // ignore

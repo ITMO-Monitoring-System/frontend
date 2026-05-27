@@ -77,14 +77,15 @@ type AttendanceEntry = {
 export default function LectureView() {
   const auth = useContext(AuthContext)
   const user = auth?.user ?? null
-  const imgRef = useRef<HTMLImageElement | null>(null)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const eventsSocketRef = useRef<WebSocket | null>(null)
-  const lastObjectUrl = useRef<string | null>(null)
   const cameraSenderRef = useRef<CameraSenderHandle | null>(null)
 
   const [hasFrame, setHasFrame] = useState<boolean>(false)
   const [detections, setDetections] = useState<Detection[]>([])
+  // Локальные bbox-ы от face-tracking (нормализованные [x,y,w,h]) — все видимые лица, без user-инфы.
+  const [localFaces, setLocalFaces] = useState<[number, number, number, number][]>([])
   const [attendance, setAttendance] = useState<Record<string, AttendanceEntry>>({})
   const [status, setStatus] = useState<'idle'|'starting'|'running'|'error'|'stopped'>('idle')
   const currentLectureId = useRef<number | null>(null)
@@ -108,20 +109,26 @@ export default function LectureView() {
   const reconnectTimerRef = useRef<number | null>(null)
   const timeoutCheckerRef = useRef<number | null>(null)
 
+  // rAF-throttle WS-сообщений посещаемости: при 10-50 событий/сек React делал бы
+  // столько же re-render-ов таблицы. Аккумулируем в буферы, флашим раз в кадр (~16мс).
+  const pendingDetectionsRef = useRef<Detection[] | null>(null)
+  const pendingUpsertsRef = useRef<any[]>([])
+  const rafIdRef = useRef<number | null>(null)
+
   useEffect(() => {
     return () => {
       if (eventsSocketRef.current) { try { eventsSocketRef.current.close() } catch {} ; eventsSocketRef.current = null }
-      if (lastObjectUrl.current) { try { URL.revokeObjectURL(lastObjectUrl.current) } catch {} ; lastObjectUrl.current = null }
       if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current)
       if (timeoutCheckerRef.current) window.clearInterval(timeoutCheckerRef.current)
+      if (rafIdRef.current !== null) { window.cancelAnimationFrame(rafIdRef.current); rafIdRef.current = null }
     }
   }, [])
 
   useEffect(() => {
-    const img = imgRef.current
+    const video = videoRef.current
     const canvas = canvasRef.current
-    if (!canvas || !img || !hasFrame) return
-    const rect = img.getBoundingClientRect()
+    if (!canvas || !video || !hasFrame) return
+    const rect = video.getBoundingClientRect()
     const dpr = window.devicePixelRatio || 1
     canvas.style.width = rect.width + 'px'
     canvas.style.height = rect.height + 'px'
@@ -131,6 +138,16 @@ export default function LectureView() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, rect.width, rect.height)
     ctx.font = '14px sans-serif'
+
+    // Локальные лица от face-tracking (тонкая зелёная рамка, без подписи).
+    // Координаты приходят нормализованными относительно отправляемого кадра.
+    ctx.lineWidth = 1.5
+    ctx.strokeStyle = '#00FF66'
+    localFaces.forEach(([rx, ry, rw, rh]) => {
+      ctx.strokeRect(rx * rect.width, ry * rect.height, rw * rect.width, rh * rect.height)
+    })
+
+    // Backend detections поверх — толстая рамка с user-меткой.
     detections.forEach(d => {
       if (!d.bbox) return
       const [rx, ry, rw, rh] = d.bbox
@@ -150,7 +167,7 @@ export default function LectureView() {
       ctx.fillStyle = 'white'
       ctx.fillText(label, x + 4, y - 4)
     })
-  }, [detections, hasFrame])
+  }, [detections, localFaces, hasFrame])
 
   useEffect(() => {
     if (!user) return
@@ -416,31 +433,58 @@ export default function LectureView() {
     })
   }
 
+  const flushPending = () => {
+    rafIdRef.current = null
+    const det = pendingDetectionsRef.current
+    pendingDetectionsRef.current = null
+    const ups = pendingUpsertsRef.current
+    pendingUpsertsRef.current = []
+    if (det) handleDetectedArray(det)
+    // React 18 батчит несколько setState в одном sync-callback'е rAF в 1 re-render
+    ups.forEach(u => upsertUser(u))
+  }
+
+  const scheduleFlush = () => {
+    if (rafIdRef.current !== null) return
+    rafIdRef.current = window.requestAnimationFrame(flushPending)
+  }
+
+  const queueDetections = (arr: Detection[]) => {
+    // detections — это снапшот текущих лиц в кадре. Последний batch перезатирает предыдущие.
+    pendingDetectionsRef.current = arr
+    scheduleFlush()
+  }
+
+  const queueUpsert = (user: any) => {
+    pendingUpsertsRef.current.push(user)
+    scheduleFlush()
+  }
+
   const handleEventsRaw = async (raw: any) => {
     try {
       if (typeof raw === 'string') {
         const parsed = JSON.parse(raw)
         if (!parsed) return
         if (Array.isArray(parsed)) {
-          handleDetectedArray(parsed as Detection[])
+          queueDetections(parsed as Detection[])
           return
         }
         if (parsed.detections && Array.isArray(parsed.detections)) {
-          handleDetectedArray(parsed.detections as Detection[])
+          queueDetections(parsed.detections as Detection[])
           return
         }
         if (parsed.user) {
           const merged = { ...(parsed.user || {}), group: parsed.group ?? parsed.user.group ?? parsed.group }
-          upsertUser(merged)
+          queueUpsert(merged)
           return
         }
         if (parsed.type === 'detection' && parsed.user) {
           const merged = { ...(parsed.user || {}), group: parsed.group ?? parsed.user.group ?? parsed.group }
-          upsertUser(merged)
+          queueUpsert(merged)
           return
         }
         if (parsed.type === 'detections' && Array.isArray(parsed.detections)) {
-          handleDetectedArray(parsed.detections as Detection[])
+          queueDetections(parsed.detections as Detection[])
           return
         }
         return
@@ -460,19 +504,24 @@ export default function LectureView() {
     }
   }
 
-  // Annotated frame received from face-tracking via CameraSender WebSocket
-  // Direct DOM update (no React re-render per frame)
-  const handleAnnotatedFrame = useCallback((blob: Blob) => {
-    if (lastObjectUrl.current) { try { URL.revokeObjectURL(lastObjectUrl.current) } catch {} }
-    const url = URL.createObjectURL(blob)
-    lastObjectUrl.current = url
-    if (imgRef.current) {
-      imgRef.current.src = url
-      if (!imgRef.current.style.display || imgRef.current.style.display === 'none') {
-        imgRef.current.style.display = ''
-      }
+  // MediaStream от CameraSender — кладём в локальный <video> для отображения.
+  const handleStream = useCallback((stream: MediaStream | null) => {
+    const v = videoRef.current
+    if (!v) return
+    if (v.srcObject !== stream) {
+      v.srcObject = stream
     }
-    setHasFrame(prev => prev ? prev : true)
+    if (stream) {
+      setHasFrame(prev => prev ? prev : true)
+    }
+  }, [])
+
+  // Локальные bbox-ы лиц от face-tracking — рисуются canvas-overlay поверх <video>.
+  const handleLocalDetections = useCallback((
+    faces: [number, number, number, number][],
+    _frameWh: [number, number],
+  ) => {
+    setLocalFaces(faces)
   }, [])
 
   // JSON events from face-tracking via CameraSender WebSocket
@@ -596,9 +645,9 @@ export default function LectureView() {
     finally {
       setStatus('stopped')
       setDetections([])
+      setLocalFaces([])
       setAttendance({})
-      if (lastObjectUrl.current) { try { URL.revokeObjectURL(lastObjectUrl.current) } catch {} ; lastObjectUrl.current = null }
-      if (imgRef.current) imgRef.current.src = ''
+      if (videoRef.current) videoRef.current.srcObject = null
       setHasFrame(false)
     }
   }
@@ -671,8 +720,9 @@ export default function LectureView() {
                 ref={cameraSenderRef}
                 getLectureId={getLectureId}
                 frameWsBase={FRAME_WS_BASE}
-                onAnnotatedFrame={handleAnnotatedFrame}
+                onLocalDetections={handleLocalDetections}
                 onServerEvent={handleServerEvent}
+                onStream={handleStream}
               />
 
               <div className="lecture-actions unified">
@@ -695,7 +745,14 @@ export default function LectureView() {
           </div>
 
           <div className="video-frame large">
-            <img ref={imgRef} alt="frame" className="video-img" style={{ display: hasFrame ? '' : 'none' }} />
+            <video
+              ref={videoRef}
+              className="video-img"
+              autoPlay
+              muted
+              playsInline
+              style={{ display: hasFrame ? '' : 'none' }}
+            />
             <canvas ref={canvasRef} className="video-canvas" />
             {!hasFrame && status !== 'running' && (
               <div className="video-placeholder">Нет видео — нажмите «Начать лекцию»</div>
