@@ -23,9 +23,9 @@ type Props = {
   active?: boolean
 }
 
-const DEFAULT_WS = (import.meta.env.VITE_WS_BASE ?? (() => {
+const DEFAULT_WS = (import.meta.env.VITE_WS_BASE?.trim() || (() => {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${protocol}//${window.location.host}`
+  return `${protocol}//${window.location.host}/tracking`
 })()).replace(/\/$/, '')
 
 const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender({

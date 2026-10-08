@@ -24,10 +24,10 @@ const toWsOrigin = (value: string) => {
   return origin
 }
 
-const API_BASE = trimTrailingSlash(import.meta.env.VITE_API_BASE ?? window.location.origin)
-const FRAME_API_BASE = trimTrailingSlash(import.meta.env.VITE_FRAME_API_BASE ?? API_BASE)
-const FRAME_WS_BASE = trimTrailingSlash(import.meta.env.VITE_WS_BASE ?? toWsOrigin(FRAME_API_BASE))
-const EVENTS_WS_BASE = trimTrailingSlash(import.meta.env.VITE_WS_EVENTS ?? toWsOrigin(API_BASE))
+const API_BASE = trimTrailingSlash(import.meta.env.VITE_API_BASE?.trim() || window.location.origin)
+const FRAME_API_BASE = trimTrailingSlash(import.meta.env.VITE_FRAME_API_BASE?.trim() || `${window.location.origin}/tracking`)
+const FRAME_WS_BASE = trimTrailingSlash(import.meta.env.VITE_WS_BASE?.trim() || toWsOrigin(FRAME_API_BASE))
+const EVENTS_WS_BASE = trimTrailingSlash(import.meta.env.VITE_WS_EVENTS?.trim() || toWsOrigin(API_BASE))
 
 const frameApi = axios.create({ baseURL: FRAME_API_BASE })
 frameApi.interceptors.request.use((cfg: any) => {
