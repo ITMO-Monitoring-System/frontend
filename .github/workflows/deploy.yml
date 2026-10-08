@@ -87,7 +87,9 @@ jobs:
             VITE_FRAME_API_BASE=${{ vars.VITE_FRAME_API_BASE }}
             VITE_WS_BASE=${{ vars.VITE_WS_BASE }}
           push: true
-          tags: ghcr.io/itmo-monitoring-system/frontend:sha-${{ github.sha }}
+          tags: |
+            ghcr.io/itmo-monitoring-system/frontend:sha-${{ github.sha }}
+            ghcr.io/itmo-monitoring-system/frontend:main
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
