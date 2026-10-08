@@ -1,4 +1,4 @@
-FROM node:18-alpine AS builder
+FROM node:24-alpine AS builder
 
 WORKDIR /app
 
@@ -7,6 +7,11 @@ COPY package*.json ./
 RUN npm ci
 
 COPY . .
+
+ARG VITE_API_BASE
+ARG VITE_WS_EVENTS
+ARG VITE_FRAME_API_BASE
+ARG VITE_WS_BASE
 
 RUN npm run build
 
