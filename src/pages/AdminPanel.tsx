@@ -362,7 +362,7 @@ export default function AdminPanel() {
           <ul className="list small">
             {departments.map(d => (
               <li key={d.id} className="list-row">
-                <span>{d.name || d.code}{d.alias ? ` (${d.alias})` : ''}</span>
+                <span>{d.code} — {d.name}{d.alias ? ` (${d.alias})` : ''}</span>
                 <button disabled={busy} className="btn small danger" onClick={() => handleDeleteDepartment(d.id, d.code)} type="button">Удалить</button>
               </li>
             ))}
