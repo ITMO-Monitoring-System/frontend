@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useContext } from 'react'
+import axios from 'axios'
 import { AuthContext } from '../contexts/AuthContext'
 import {
   createUser,
@@ -197,7 +198,9 @@ export default function AdminPanel() {
       alert('Направление создано')
     } catch (err) {
       console.error(err)
-      alert('Ошибка создания направления')
+      alert(axios.isAxiosError(err) && err.response?.status === 409
+        ? 'Направление с таким кодом уже существует'
+        : 'Ошибка создания направления')
     } finally {
       setBusy(false)
     }
@@ -362,7 +365,7 @@ export default function AdminPanel() {
           <ul className="list small">
             {departments.map(d => (
               <li key={d.id} className="list-row">
-                <span>{d.code} — {d.name}{d.alias ? ` (${d.alias})` : ''}</span>
+                <span>{d.code} – {d.name}{d.alias ? ` (${d.alias})` : ''}</span>
                 <button disabled={busy} className="btn small danger" onClick={() => handleDeleteDepartment(d.id, d.code)} type="button">Удалить</button>
               </li>
             ))}
@@ -375,7 +378,7 @@ export default function AdminPanel() {
             <label>Направление</label>
             <select value={deptForGroup} onChange={e => setDeptForGroup(e.target.value === '' ? '' : Number(e.target.value))}>
               <option value="">-- выберите направление --</option>
-              {departments.map(d => <option key={d.id} value={d.id}>{d.name || d.code || d.alias}</option>)}
+              {departments.map(d => <option key={d.id} value={d.id}>{d.code} – {d.name}</option>)}
             </select>
             <label>Код группы</label>
             <input value={groupCode} onChange={e => setGroupCode(e.target.value)} placeholder="P3215" />
@@ -413,7 +416,7 @@ export default function AdminPanel() {
               <label>Направление</label>
               <select value={bindDept} onChange={e => setBindDept(e.target.value === '' ? '' : Number(e.target.value))}>
                 <option value="">— выберите направление —</option>
-                {departments.map(d => <option key={d.id} value={d.id}>{d.name || d.code || d.alias || d.id}</option>)}
+                {departments.map(d => <option key={d.id} value={d.id}>{d.code} – {d.name}</option>)}
               </select>
 
               <label>Группа</label>

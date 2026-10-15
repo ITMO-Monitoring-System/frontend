@@ -64,7 +64,7 @@ export default function RegisterPage() {
   }, [selectedDeptId])
 
   const getDepartmentLabel = (department: Department) =>
-    department.name?.trim() || department.code?.trim() || department.alias?.trim() || String(department.id)
+    `${department.code} – ${department.name}`
 
   const getGroupLabel = (group: Group) => group.name?.trim() || group.code
 

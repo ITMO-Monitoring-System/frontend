@@ -834,7 +834,7 @@ export default function LectureView() {
                   >
                     <option value="">Выберите направление</option>
                     {availableDepartments.map(d => (
-                      <option key={d.id} value={String(d.id)}>{d.name}</option>
+                      <option key={d.id} value={String(d.id)}>{d.code} – {d.name}</option>
                     ))}
                   </select>
                 </div>
