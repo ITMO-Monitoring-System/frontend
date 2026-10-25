@@ -1,3 +1,4 @@
+import { localDateTimeToISO } from '../utils/localDateTime'
 import { useEffect, useRef, useState, useContext, useCallback } from 'react'
 import { AuthContext } from '../contexts/AuthContext'
 import type { Detection, Lecture, Department, Group, Subject } from '../types'
@@ -218,16 +219,18 @@ export default function LectureView() {
 
   const openCreateModal = async (practice: boolean) => {
     setIsPractice(practice)
+    setAvailableDepartments([])
+    setAvailableSubjects([])
+    setAvailableGroups([])
+    setSelectedDepartmentId('')
+    setNewGroupIds([])
+    setNewSubjectId('')
+    setNewLectureDate('')
     setShowCreateModal(true)
     try {
       const [depsRes, subsRes] = await Promise.all([listDepartments({ limit: 200 }), listSubjects()])
       setAvailableDepartments(depsRes.data.departments || [])
       setAvailableSubjects(subsRes.data || [])
-      setAvailableGroups([])
-      setSelectedDepartmentId('')
-      setNewGroupIds([])
-      setNewSubjectId('')
-      setNewLectureDate('')
     } catch {
       setAvailableDepartments([])
       setAvailableSubjects([])
@@ -268,13 +271,13 @@ export default function LectureView() {
       alert('Выберите хотя бы одну группу')
       return
     }
-    const payload = {
-      date: newLectureDate + ":00Z",
-      subject_id: parseInt(newSubjectId, 10),
-      group_ids: newGroupIds,
-      teacher_id: teacherIsu,
-    }
     try {
+      const payload = {
+        date: localDateTimeToISO(newLectureDate),
+        subject_id: parseInt(newSubjectId, 10),
+        group_ids: newGroupIds,
+        teacher_id: teacherIsu,
+      }
       await createLecture(payload)
       setShowCreateModal(false)
       setNewLectureDate('')
