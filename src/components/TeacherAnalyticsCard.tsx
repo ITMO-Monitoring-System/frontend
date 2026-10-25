@@ -1,38 +1,34 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import TeacherAnalytics from './TeacherAnalytics';
 import './TeacherAnalyticsCard.css';
 
-const TeacherAnalyticsCard: React.FC = () => {
+export default function TeacherAnalyticsCard() {
   const [isExpanded, setIsExpanded] = useState(false);
-
   return (
     <div className="analytics-card">
-      <div 
+      <button
         className="analytics-card-header"
-        onClick={() => setIsExpanded(!isExpanded)}
+        type="button"
+        aria-expanded={isExpanded}
+        aria-controls="teacher-analytics-content"
+        onClick={() => setIsExpanded((value) => !value)}
       >
-        <div className="analytics-card-title">
-          <span className="analytics-icon"></span>
-          <h3>Аналитика посещений лекций</h3>
-        </div>
-        <button 
-          className="analytics-card-toggle"
-          aria-label={isExpanded ? 'Свернуть аналитику' : 'Развернуть аналитику'}
-        >
-          {isExpanded ? '▲' : '▼'}
-        </button>
-      </div>
-      
+        <span className="analytics-card-title">Аналитика посещений лекций</span>
+        <span className="analytics-card-toggle" aria-hidden="true">
+          {isExpanded ? '−' : '+'}
+        </span>
+      </button>
       {isExpanded && (
-        <div className="analytics-card-content">
+        <div className="analytics-card-content" id="teacher-analytics-content">
           <div className="analytics-card-description">
-            <p>Просмотр статистики посещаемости студентов по вашим лекциям. Выберите предмет, лекцию и группу для получения данных.</p>
+            <p>
+              Посещаемость по лекциям, группам и студентам, динамика по неделям и экспорт за
+              выбранный период.
+            </p>
           </div>
           <TeacherAnalytics />
         </div>
       )}
     </div>
   );
-};
-
-export default TeacherAnalyticsCard;
+}

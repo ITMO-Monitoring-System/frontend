@@ -1,641 +1,734 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { getTeacherReport, getTeacherSubjects } from '../services/api';
+import { apiError } from '../utils/apiError';
+import { downloadCsv, downloadWorkbook, type ExportCell } from '../utils/reportExport';
 import {
-  getTeacherSubjects,
-  getTeacherLecturesBySubject,
-  getLectureGroups,
-  getLectureGroupStudents,
-} from '../services/api'
-import './lecture-analytics.css'
+  attendancePercent,
+  attendanceStatus,
+  localDate,
+  reportBuckets,
+  statusLabels,
+  studentName,
+  summarizeAttendance,
+  type AttendanceConfig,
+  type AttendanceRow,
+  type TeacherReport,
+} from '../utils/teacherReport';
+import './lecture-analytics.css';
 
-interface TeacherSubject {
-  id: number
-  name: string
-}
+const envDuration = Number(import.meta.env.VITE_DEFAULT_LECTURE_DURATION_MINUTES);
+const defaultConfig: AttendanceConfig = {
+  durationMinutes:
+    Number.isFinite(envDuration) && envDuration >= 1 && envDuration <= 600 ? envDuration : 90,
+  presentThreshold: 80,
+  partialThreshold: 30,
+  gapSeconds: 180,
+};
+const initialFrom = () => {
+  const date = new Date();
+  date.setDate(date.getDate() - 89);
+  return localDate(date);
+};
+const dateLabel = (value: string) =>
+  new Date(value).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' });
+const percentLabel = (value: number, total: number) => (total ? `${value.toFixed(1)}%` : '—');
+const rowKey = (row: AttendanceRow) => `${row.lecture_id}:${row.group_code}:${row.isu}`;
+type View = 'lectures' | 'groups' | 'students' | 'details';
+const views: { id: View; label: string }[] = [
+  { id: 'lectures', label: 'По лекциям' },
+  { id: 'groups', label: 'По группам' },
+  { id: 'students', label: 'По студентам' },
+  { id: 'details', label: 'Отметки и отсутствующие' },
+];
 
-interface TeacherLecture {
-  date: string
-  lecture_id: number
-}
-
-interface TeacherGroup {
-  group_code: string
-}
-
-interface TeacherStudent {
-  isu: string
-  last_name: string
-  first_name: string
-  patronymic: string
-  present_seconds: number
-}
-
-type StudentsMeta = { page: number; page_size: number; total: number }
-
-const DEFAULT_LECTURE_DURATION_MINUTES = (() => {
-  const fromEnv = Number(import.meta.env.VITE_DEFAULT_LECTURE_DURATION_MINUTES)
-  return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : 90
-})()
-
-const PRESENCE_MIN_SECONDS = 60
-const DEFAULT_GAP_SECONDS = 180
-const GAP_SECONDS_MIN = 5
-const GAP_SECONDS_MAX = 600
-
-const GAP_SECONDS_HELP =
-  'Разрывы между соседними детекциями длиннее этого значения не засчитываются в присутствие. ' +
-  'При 180 сек студент может отойти на 3 минуты (туалет, попить) без потери времени. ' +
-  'Увеличьте до 300 сек (5 мин), чтобы быть мягче, или уменьшите для строгого учёта. ' +
-  'Слишком большое значение позволит студентам «терять» часть лекции незамеченно.'
-
-const compareStudents = (a: TeacherStudent, b: TeacherStudent) =>
-  (a.last_name || '').localeCompare(b.last_name || '', 'ru') ||
-  (a.first_name || '').localeCompare(b.first_name || '', 'ru') ||
-  (a.patronymic || '').localeCompare(b.patronymic || '', 'ru') ||
-  (a.isu || '').localeCompare(b.isu || '')
-
-const clampPercent = (value: number) => Math.max(0, Math.min(100, value))
-
-const clampGapSeconds = (value: number) => {
-  if (!Number.isFinite(value)) return DEFAULT_GAP_SECONDS
-  return Math.max(GAP_SECONDS_MIN, Math.min(GAP_SECONDS_MAX, Math.round(value)))
-}
-
-const formatSeconds = (seconds: number) => {
-  if (!seconds || seconds <= 0) return '0s'
-  const hh = Math.floor(seconds / 3600)
-  const mm = Math.floor((seconds % 3600) / 60)
-  const ss = Math.floor(seconds % 60)
-  if (hh > 0) return `${hh}h ${String(mm).padStart(2, '0')}m`
-  if (mm > 0) return `${mm}m ${String(ss).padStart(2, '0')}s`
-  return `${ss}s`
-}
-
-const getStatusByPercent = (percent: number, presentThreshold: number, partialThreshold: number) => {
-  if (percent >= presentThreshold) return { label: 'Присутствовал', className: 'present' }
-  if (percent >= partialThreshold) return { label: 'Частично', className: 'partial' }
-  return { label: 'Ниже порога', className: 'absent' }
-}
-
-const fetchAllGroupStudents = async (lectureId: number, groupCode: string, gapSeconds: number) => {
-  const pageSize = 200
-  const first = await getLectureGroupStudents(lectureId, groupCode, {
-    page: 1,
-    page_size: pageSize,
-    gap_seconds: gapSeconds,
-  })
-  const items = [...(first.data.items || [])]
-  const total = first.data.meta?.total ?? items.length
-  const totalPages = Math.max(1, Math.ceil(total / pageSize))
-
-  for (let page = 2; page <= totalPages; page += 1) {
-    const next = await getLectureGroupStudents(lectureId, groupCode, {
-      page,
-      page_size: pageSize,
-      gap_seconds: gapSeconds,
-    })
-    items.push(...(next.data.items || []))
-  }
-
-  return items
-}
-
-const TeacherAnalytics: React.FC = () => {
-  const [teacherSubjects, setTeacherSubjects] = useState<TeacherSubject[]>([])
-  const [selectedSubjectId, setSelectedSubjectId] = useState<number | null>(null)
-  const [teacherLectures, setTeacherLectures] = useState<TeacherLecture[]>([])
-  const [selectedLectureId, setSelectedLectureId] = useState<number | null>(null)
-  const [lectureGroups, setLectureGroups] = useState<TeacherGroup[]>([])
-  const [selectedGroupCode, setSelectedGroupCode] = useState<string>('')
-  const [teacherStudents, setTeacherStudents] = useState<TeacherStudent[]>([])
-  const [studentsMeta, setStudentsMeta] = useState<StudentsMeta>({
-    page: 1,
-    page_size: 50,
-    total: 0,
-  })
-  const [lectureDurationMinutes, setLectureDurationMinutes] = useState(DEFAULT_LECTURE_DURATION_MINUTES)
-  const [presentThresholdInput, setPresentThresholdInput] = useState(80)
-  const [partialThresholdInput, setPartialThresholdInput] = useState(30)
-  const [gapSeconds, setGapSeconds] = useState<number>(DEFAULT_GAP_SECONDS)
-  const [subjectSummarySeconds, setSubjectSummarySeconds] = useState<number[][]>([])
-  const [summaryError, setSummaryError] = useState('')
-  const [loading, setLoading] = useState({
-    subjects: false,
-    lectures: false,
-    groups: false,
-    students: false,
-    summary: false,
-  })
-
-  const lectureDurationSeconds = Math.max(60, Math.round(lectureDurationMinutes * 60))
-  const presentThreshold = clampPercent(presentThresholdInput)
-  const partialThreshold = Math.min(clampPercent(partialThresholdInput), presentThreshold)
+export default function TeacherAnalytics() {
+  const [subjects, setSubjects] = useState<{ id: number; name: string }[]>([]);
+  const [subjectsLoading, setSubjectsLoading] = useState(true);
+  const [subjectsError, setSubjectsError] = useState('');
+  const [subjectId, setSubjectId] = useState('');
+  const [dateFrom, setDateFrom] = useState(initialFrom);
+  const [dateTo, setDateTo] = useState(() => localDate(new Date()));
+  const [config, setConfig] = useState(defaultConfig);
+  const [configError, setConfigError] = useState('');
+  const [result, setResult] = useState<{ key: string; report: TeacherReport } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [refresh, setRefresh] = useState(0);
+  const [lectureId, setLectureId] = useState('');
+  const [groupCode, setGroupCode] = useState('');
+  const [studentISU, setStudentISU] = useState('');
+  const [view, setView] = useState<View>('lectures');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [page, setPage] = useState(1);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const requestKey = `${subjectId}:${dateFrom}:${dateTo}:${config.gapSeconds}:${refresh}`;
+  const report = result?.key === requestKey ? result.report : null;
 
   useEffect(() => {
-    const loadTeacherSubjects = async () => {
-      try {
-        setLoading(prev => ({ ...prev, subjects: true }))
-        const response = await getTeacherSubjects()
-        setTeacherSubjects(response.data.subjects || [])
-      } catch (error) {
-        console.error('Ошибка загрузки предметов:', error)
-        setTeacherSubjects([])
-      } finally {
-        setLoading(prev => ({ ...prev, subjects: false }))
-      }
+    let active = true;
+    setSubjectsLoading(true);
+    setSubjectsError('');
+    getTeacherSubjects()
+      .then((r) => {
+        if (active) setSubjects(r.data.subjects || []);
+      })
+      .catch((e) => {
+        if (active) setSubjectsError(apiError(e, 'Не удалось загрузить предметы.'));
+      })
+      .finally(() => {
+        if (active) setSubjectsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [refresh]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setError('');
+    setResult(null);
+    setPage(1);
+    setExportError('');
+    if (!subjectId || !dateFrom || !dateTo) {
+      setLoading(false);
+      return () => controller.abort();
     }
-
-    void loadTeacherSubjects()
-  }, [])
-
-  const loadSubjectSummary = async (lectures: TeacherLecture[]) => {
-    if (!lectures.length) {
-      setSubjectSummarySeconds([])
-      return
+    const from = new Date(`${dateFrom}T00:00:00`);
+    const until = new Date(`${dateTo}T00:00:00`);
+    until.setDate(until.getDate() + 1);
+    if (until <= from || until.getTime() - from.getTime() > 366 * 86400000) {
+      setError('Выберите период от 1 до 366 дней.');
+      setLoading(false);
+      return () => controller.abort();
     }
+    setLoading(true);
+    getTeacherReport(
+      Number(subjectId),
+      {
+        date_from: from.toISOString(),
+        date_to: until.toISOString(),
+        gap_seconds: config.gapSeconds,
+      },
+      controller.signal
+    )
+      .then((r) => {
+        if (!controller.signal.aborted) setResult({ key: requestKey, report: r.data });
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted)
+          setError(apiError(e, 'Не удалось загрузить отчёт. Повторите попытку.'));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [subjectId, dateFrom, dateTo, config.gapSeconds, requestKey]);
 
-    setLoading(prev => ({ ...prev, summary: true }))
-    setSummaryError('')
-    try {
-      const byLecture = await Promise.all(
-        lectures.map(async lecture => {
-          const groupsResponse = await getLectureGroups(lecture.lecture_id)
-          const groups = groupsResponse.data.groups || []
-          const seconds: number[] = []
-
-          for (const group of groups) {
-            const students = await fetchAllGroupStudents(lecture.lecture_id, group.group_code, gapSeconds)
-            students.forEach(student => {
-              seconds.push(Math.max(0, student.present_seconds || 0))
-            })
-          }
-
-          return seconds
-        })
+  const resetScope = () => {
+    setLectureId('');
+    setGroupCode('');
+    setStudentISU('');
+    setPage(1);
+  };
+  const groupOptions = useMemo(
+    () =>
+      [
+        ...new Set(
+          (report?.lectures || [])
+            .filter((l) => !lectureId || l.lecture_id === Number(lectureId))
+            .flatMap((l) => l.groups)
+        ),
+      ].sort(),
+    [report, lectureId]
+  );
+  const studentOptions = useMemo(() => {
+    const students = new Map<string, AttendanceRow>();
+    for (const row of report?.items || []) {
+      if (
+        (!lectureId || row.lecture_id === Number(lectureId)) &&
+        (!groupCode || row.group_code === groupCode)
       )
-      setSubjectSummarySeconds(byLecture)
-    } catch (error) {
-      console.error('Ошибка загрузки сводной аналитики:', error)
-      setSummaryError('Не удалось посчитать сводную аналитику')
-      setSubjectSummarySeconds([])
-    } finally {
-      setLoading(prev => ({ ...prev, summary: false }))
+        students.set(row.isu, row);
     }
-  }
+    return [...students.values()].sort(
+      (a, b) => studentName(a).localeCompare(studentName(b), 'ru') || a.isu.localeCompare(b.isu)
+    );
+  }, [report, lectureId, groupCode]);
+  const scoped = useMemo<TeacherReport>(() => {
+    if (!report) return { lectures: [], items: [] };
+    const items = report.items.filter(
+      (r) =>
+        (!lectureId || r.lecture_id === Number(lectureId)) &&
+        (!groupCode || r.group_code === groupCode) &&
+        (!studentISU || r.isu === studentISU)
+    );
+    const studentLectureIDs = new Set(items.map((r) => r.lecture_id));
+    const lectures = report.lectures
+      .filter(
+        (l) =>
+          (!lectureId || l.lecture_id === Number(lectureId)) &&
+          (!groupCode || l.groups.includes(groupCode)) &&
+          (!studentISU || studentLectureIDs.has(l.lecture_id))
+      )
+      .map((l) => ({
+        ...l,
+        groups: groupCode ? l.groups.filter((g) => g === groupCode) : l.groups,
+      }));
+    return { lectures, items };
+  }, [report, lectureId, groupCode, studentISU]);
+  const summary = useMemo(() => summarizeAttendance(scoped.items, config), [scoped, config]);
+  const weeks = useMemo(() => reportBuckets(scoped, 'weeks'), [scoped]);
+  const buckets = useMemo(
+    () => (view === 'details' ? [] : reportBuckets(scoped, view)),
+    [scoped, view]
+  );
+  const detailRows = useMemo(
+    () =>
+      scoped.items.filter((row) => !statusFilter || attendanceStatus(row, config) === statusFilter),
+    [scoped, statusFilter, config]
+  );
+  const count = view === 'details' ? detailRows.length : buckets.length;
+  const maxPage = Math.max(1, Math.ceil(count / 50));
+  const visiblePage = Math.min(page, maxPage);
+  const sliceStart = (visiblePage - 1) * 50;
+  const lectureById = new Map(scoped.lectures.map((l) => [l.lecture_id, l]));
+  const subjectName = subjects.find((s) => s.id === Number(subjectId))?.name || subjectId;
 
-  const loadTeacherLectures = async (subjectId: number) => {
+  const applyConfig = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const next = {
+      durationMinutes: Number(data.get('duration')),
+      presentThreshold: Number(data.get('present')),
+      partialThreshold: Number(data.get('partial')),
+      gapSeconds: Number(data.get('gap')),
+    };
+    if (next.partialThreshold >= next.presentThreshold) {
+      setConfigError('Порог «частично» должен быть ниже порога «присутствовал».');
+      return;
+    }
+    setConfig(next);
+    setConfigError('');
+    setPage(1);
+  };
+
+  const exportReport = async (format: 'csv' | 'xlsx') => {
+    if (!report || exporting) return;
+    setExporting(true);
+    setExportError('');
     try {
-      setLoading(prev => ({ ...prev, lectures: true }))
-      setTeacherLectures([])
-      setSelectedLectureId(null)
-      setLectureGroups([])
-      setSelectedGroupCode('')
-      setTeacherStudents([])
-      setStudentsMeta({ page: 1, page_size: 50, total: 0 })
-      setSubjectSummarySeconds([])
-
-      const response = await getTeacherLecturesBySubject(subjectId, {
-        order: 'desc',
-        page: 1,
-        page_size: 200,
-      })
-      const lectures = response.data.items || []
-      setTeacherLectures(lectures)
-      void loadSubjectSummary(lectures)
-    } catch (error) {
-      console.error('Ошибка загрузки лекций:', error)
-      setTeacherLectures([])
-      setSubjectSummarySeconds([])
-    } finally {
-      setLoading(prev => ({ ...prev, lectures: false }))
-    }
-  }
-
-  const loadLectureGroups = async (lectureId: number) => {
-    try {
-      setLoading(prev => ({ ...prev, groups: true }))
-      setLectureGroups([])
-      setSelectedGroupCode('')
-      setTeacherStudents([])
-      setStudentsMeta({ page: 1, page_size: 50, total: 0 })
-
-      const response = await getLectureGroups(lectureId)
-      setLectureGroups(response.data.groups || [])
-    } catch (error) {
-      console.error('Ошибка загрузки групп:', error)
-      setLectureGroups([])
-    } finally {
-      setLoading(prev => ({ ...prev, groups: false }))
-    }
-  }
-
-  const loadGroupStudents = async (lectureId: number, groupCode: string, page = 1) => {
-    try {
-      setLoading(prev => ({ ...prev, students: true }))
-      const response = await getLectureGroupStudents(lectureId, groupCode, {
-        page,
-        page_size: studentsMeta.page_size,
-        gap_seconds: gapSeconds,
-      })
-      const items = [...(response.data.items || [])].sort(compareStudents)
-      setTeacherStudents(items)
-      setStudentsMeta(response.data.meta)
-    } catch (error) {
-      console.error('Ошибка загрузки студентов:', error)
-      setTeacherStudents([])
-      setStudentsMeta(prev => ({ ...prev, total: 0 }))
-    } finally {
-      setLoading(prev => ({ ...prev, students: false }))
-    }
-  }
-
-  useEffect(() => {
-    if (selectedSubjectId !== null) {
-      void loadTeacherLectures(selectedSubjectId)
-    } else {
-      setTeacherLectures([])
-      setSelectedLectureId(null)
-      setSubjectSummarySeconds([])
-    }
-  }, [selectedSubjectId])
-
-  useEffect(() => {
-    if (selectedLectureId !== null) {
-      void loadLectureGroups(selectedLectureId)
-    } else {
-      setLectureGroups([])
-      setSelectedGroupCode('')
-    }
-  }, [selectedLectureId])
-
-  useEffect(() => {
-    if (selectedLectureId !== null && selectedGroupCode) {
-      void loadGroupStudents(selectedLectureId, selectedGroupCode)
-    } else {
-      setTeacherStudents([])
-      setStudentsMeta(prev => ({ ...prev, total: 0 }))
-    }
-    // re-fetch when gapSeconds changes — server recomputes presence with new threshold
-  }, [selectedLectureId, selectedGroupCode, gapSeconds])
-
-  useEffect(() => {
-    // recompute subject-wide summary when gapSeconds changes
-    if (teacherLectures.length > 0) {
-      void loadSubjectSummary(teacherLectures)
-    }
-  }, [gapSeconds])
-
-  const summary = useMemo(() => {
-    const totalLectures = subjectSummarySeconds.length
-    if (!totalLectures) {
-      return {
-        averageAttendancePercent: 0,
-        totalLectures: 0,
-        averagePresentCount: 0,
-        averageStudentsCount: 0,
+      const metadata: ExportCell[][] = [
+        ['Предмет', subjectName],
+        ['Период', dateFrom, dateTo],
+        ['Лекция', lectureId || 'Все'],
+        ['Группа', groupCode || 'Все'],
+        ['Студент', studentISU || 'Все'],
+        ['Длительность лекции (мин)', config.durationMinutes],
+        ['Порог присутствия (%)', config.presentThreshold],
+        ['Порог частичного присутствия (%)', config.partialThreshold],
+        ['Допустимый разрыв (сек)', config.gapSeconds],
+        ['Состав групп', 'Текущий состав; будущие лекции исключены'],
+      ];
+      const details: ExportCell[][] = [
+        [
+          'Лекция',
+          'Дата',
+          'Группа',
+          'ИСУ',
+          'ФИО',
+          'Присутствие (сек)',
+          'Присутствие (%)',
+          'Отметок',
+          'Статус',
+        ],
+        ...scoped.items.map((r) => [
+          r.lecture_id,
+          dateLabel(lectureById.get(r.lecture_id)!.date),
+          r.group_code,
+          r.isu,
+          studentName(r),
+          r.present_seconds,
+          Number(attendancePercent(r, config).toFixed(1)),
+          r.detection_count,
+          statusLabels[attendanceStatus(r, config)],
+        ]),
+      ];
+      const name = `attendance_${subjectId}_${dateFrom}_${dateTo}`;
+      if (format === 'csv') downloadCsv([...metadata, [], ...details], `${name}.csv`);
+      else {
+        const summarySheet = (
+          kind: 'lectures' | 'groups' | 'students' | 'weeks'
+        ): ExportCell[][] => [
+          [
+            'Раздел',
+            'Лекций',
+            'Студент × лекция',
+            'Присутствовали',
+            'Нет отметок',
+            'Посещаемость (%)',
+            'Среднее присутствие (%)',
+          ],
+          ...reportBuckets(scoped, kind).map((b) => {
+            const s = summarizeAttendance(b.rows, config);
+            return [
+              kind === 'lectures' ? dateLabel(b.label) : b.label,
+              b.lectureCount,
+              s.total,
+              s.present,
+              s.absent,
+              s.total ? Number(s.attendance.toFixed(1)) : '',
+              s.total ? Number(s.averagePresence.toFixed(1)) : '',
+            ];
+          }),
+        ];
+        await downloadWorkbook(
+          [
+            { name: 'Параметры', rows: metadata },
+            { name: 'Отметки', rows: details },
+            { name: 'Лекции', rows: summarySheet('lectures') },
+            { name: 'Группы', rows: summarySheet('groups') },
+            { name: 'Студенты', rows: summarySheet('students') },
+            { name: 'Недели', rows: summarySheet('weeks') },
+          ],
+          `${name}.xlsx`
+        );
       }
+    } catch {
+      setExportError('Не удалось сформировать файл. Повторите экспорт.');
+    } finally {
+      setExporting(false);
     }
-
-    const presentThresholdSeconds = lectureDurationSeconds * (presentThreshold / 100)
-    let normalizedAttendanceSum = 0
-    let totalStudents = 0
-    let totalPresentByThreshold = 0
-
-    subjectSummarySeconds.forEach(lectureStudentsSeconds => {
-      lectureStudentsSeconds.forEach(seconds => {
-        totalStudents += 1
-        const normalized = Math.min(Math.max(seconds, 0) / lectureDurationSeconds, 1)
-        normalizedAttendanceSum += normalized
-        if (seconds >= presentThresholdSeconds) {
-          totalPresentByThreshold += 1
-        }
-      })
-    })
-
-    return {
-      averageAttendancePercent: totalStudents ? (normalizedAttendanceSum / totalStudents) * 100 : 0,
-      totalLectures,
-      averagePresentCount: totalLectures ? totalPresentByThreshold / totalLectures : 0,
-      averageStudentsCount: totalLectures ? totalStudents / totalLectures : 0,
-    }
-  }, [subjectSummarySeconds, lectureDurationSeconds, presentThreshold])
-
-  const exportAnalyticsToCSV = () => {
-    if (!teacherStudents.length) {
-      alert('Нет данных для экспорта')
-      return
-    }
-
-    const headers = [
-      'Был',
-      'ISU',
-      'Фамилия',
-      'Имя',
-      'Отчество',
-      'Время присутствия',
-      'Время присутствия (сек)',
-      'Посещаемость (%)',
-      'Статус',
-    ]
-
-    const rows = teacherStudents.map(student => {
-      const seconds = Math.max(0, student.present_seconds || 0)
-      const attendancePercent = Math.min(100, (seconds / lectureDurationSeconds) * 100)
-      const status = getStatusByPercent(attendancePercent, presentThreshold, partialThreshold)
-      const wasPresent = seconds >= PRESENCE_MIN_SECONDS
-      return [
-        wasPresent ? 'был' : 'не был',
-        student.isu,
-        student.last_name,
-        student.first_name,
-        student.patronymic || '',
-        formatSeconds(student.present_seconds),
-        String(student.present_seconds),
-        attendancePercent.toFixed(1),
-        status.label,
-      ]
-    })
-
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(',')),
-    ].join('\n')
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-    const link = document.createElement('a')
-    const url = URL.createObjectURL(blob)
-
-    const subjectName = teacherSubjects.find(subject => subject.id === selectedSubjectId)?.name || 'subject'
-    const fileName = `analytics_${subjectName}_lecture_${selectedLectureId}_group_${selectedGroupCode}_gap${gapSeconds}s.csv`
-
-    link.setAttribute('href', url)
-    link.setAttribute('download', fileName)
-    link.style.visibility = 'hidden'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
-  }
-
-  const maxStudentsPage = Math.max(1, Math.ceil(studentsMeta.total / studentsMeta.page_size))
+  };
 
   return (
-    <div className="analytics-container">
-      <div className="analytics-filters">
-        <div className="filter-row">
-          <div className="filter-group">
-            <label>Предмет</label>
-            <select
-              className="filter-select"
-              value={selectedSubjectId ?? ''}
-              onChange={e => setSelectedSubjectId(e.target.value ? Number(e.target.value) : null)}
-              disabled={loading.subjects}
-            >
-              <option value="">Выберите предмет</option>
-              {teacherSubjects.map(subject => (
-                <option key={subject.id} value={subject.id}>
-                  {subject.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="filter-group">
-            <label>Лекция</label>
-            <select
-              className="filter-select"
-              value={selectedLectureId ?? ''}
-              onChange={e => setSelectedLectureId(e.target.value ? Number(e.target.value) : null)}
-              disabled={!selectedSubjectId || loading.lectures}
-            >
-              <option value="">Выберите лекцию</option>
-              {teacherLectures.map(lecture => (
-                <option key={lecture.lecture_id} value={lecture.lecture_id}>
-                  {new Date(lecture.date).toLocaleDateString('ru-RU', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="filter-group">
-            <label>Группа</label>
-            <select
-              className="filter-select"
-              value={selectedGroupCode}
-              onChange={e => setSelectedGroupCode(e.target.value)}
-              disabled={!selectedLectureId || loading.groups}
-            >
-              <option value="">Выберите группу</option>
-              {lectureGroups.map(group => (
-                <option key={group.group_code} value={group.group_code}>
-                  {group.group_code}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <div className="analytics-config-row">
-          <div className="filter-group compact">
-            <label>Длительность лекции (мин)</label>
+    <div className="teacher-report">
+      <div className="report-filters">
+        <label>
+          Предмет
+          <select
+            value={subjectId}
+            disabled={subjectsLoading}
+            onChange={(e) => {
+              setSubjectId(e.target.value);
+              resetScope();
+            }}
+          >
+            <option value="">{subjectsLoading ? 'Загрузка…' : 'Выберите предмет'}</option>
+            {subjects.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Период с
+          <input
+            aria-label="Период с"
+            type="date"
+            value={dateFrom}
+            onChange={(e) => {
+              setDateFrom(e.target.value);
+              resetScope();
+            }}
+          />
+        </label>
+        <label>
+          Период по
+          <input
+            aria-label="Период по"
+            type="date"
+            value={dateTo}
+            onChange={(e) => {
+              setDateTo(e.target.value);
+              resetScope();
+            }}
+          />
+        </label>
+        <button
+          className="report-btn"
+          type="button"
+          disabled={loading}
+          onClick={() => setRefresh((v) => v + 1)}
+        >
+          Обновить
+        </button>
+      </div>
+      {subjectsError && (
+        <p className="report-error" role="alert">
+          {subjectsError}
+        </p>
+      )}
+      {!subjectsLoading && !subjectsError && !subjects.length && (
+        <p className="report-hint">У вас пока нет предметов с лекциями.</p>
+      )}
+      <details className="report-settings">
+        <summary>
+          Настройки расчёта · {config.durationMinutes} мин · порог {config.presentThreshold}% ·
+          разрыв {config.gapSeconds} сек
+        </summary>
+        <form onSubmit={applyConfig} className="report-settings-form">
+          <label>
+            Длительность, мин
             <input
-              className="filter-input"
+              name="duration"
               type="number"
               min={1}
+              max={600}
               step={1}
-              value={lectureDurationMinutes}
-              onChange={e => setLectureDurationMinutes(Math.max(1, Number(e.target.value) || 1))}
+              required
+              defaultValue={config.durationMinutes}
             />
-          </div>
-          <div className="filter-group compact">
-            <label>Порог «присутствовал» (%)</label>
+          </label>
+          <label>
+            Присутствовал, %
             <input
-              className="filter-input"
+              name="present"
               type="number"
-              min={0}
+              min={1}
               max={100}
               step={1}
-              value={presentThresholdInput}
-              onChange={e => setPresentThresholdInput(Number(e.target.value) || 0)}
+              required
+              defaultValue={config.presentThreshold}
             />
-          </div>
-          <div className="filter-group compact">
-            <label>Порог «частично» (%)</label>
+          </label>
+          <label>
+            Частично, %
             <input
-              className="filter-input"
+              name="partial"
               type="number"
-              min={0}
-              max={100}
+              min={1}
+              max={99}
               step={1}
-              value={partialThresholdInput}
-              onChange={e => setPartialThresholdInput(Number(e.target.value) || 0)}
+              required
+              defaultValue={config.partialThreshold}
             />
-          </div>
-          <div className="filter-group compact">
-            <label title={GAP_SECONDS_HELP}>
-              Допустимый разрыв (сек) <span style={{ cursor: 'help', opacity: 0.7 }}>ⓘ</span>
+          </label>
+          <label>
+            Допустимый разрыв, сек
+            <input
+              name="gap"
+              type="number"
+              min={5}
+              max={600}
+              step={1}
+              required
+              defaultValue={config.gapSeconds}
+            />
+          </label>
+          <button className="report-btn" type="submit">
+            Применить
+          </button>
+        </form>
+        <p className="report-hint">
+          Время — сумма интервалов между соседними отметками. Разрывы длиннее выбранного значения не
+          учитываются. Длительность применяется ко всем лекциям отчёта, поскольку фактическое время
+          окончания не сохраняется.
+        </p>
+        {configError && (
+          <p className="report-error" role="alert">
+            {configError}
+          </p>
+        )}
+      </details>
+      {error && (
+        <p className="report-error" role="alert">
+          {error}
+        </p>
+      )}
+      {loading && (
+        <p className="report-empty" role="status">
+          Загружаем полный отчёт…
+        </p>
+      )}
+      {!subjectId && !subjectsError && (
+        <p className="report-empty">Выберите предмет, чтобы увидеть посещаемость за период.</p>
+      )}
+      {report && (
+        <>
+          <div className="report-scope">
+            <label>
+              Лекция
+              <select
+                value={lectureId}
+                onChange={(e) => {
+                  setLectureId(e.target.value);
+                  setGroupCode('');
+                  setStudentISU('');
+                  setPage(1);
+                }}
+              >
+                <option value="">Все лекции</option>
+                {report.lectures.map((l) => (
+                  <option key={l.lecture_id} value={l.lecture_id}>
+                    {dateLabel(l.date)} · №{l.lecture_id}
+                  </option>
+                ))}
+              </select>
             </label>
-            <input
-              className="filter-input"
-              type="number"
-              min={GAP_SECONDS_MIN}
-              max={GAP_SECONDS_MAX}
-              step={5}
-              value={gapSeconds}
-              onChange={e => setGapSeconds(clampGapSeconds(Number(e.target.value)))}
-              title={GAP_SECONDS_HELP}
-            />
+            <label>
+              Группа
+              <select
+                value={groupCode}
+                onChange={(e) => {
+                  setGroupCode(e.target.value);
+                  setStudentISU('');
+                  setPage(1);
+                }}
+              >
+                <option value="">Все группы</option>
+                {groupOptions.map((g) => (
+                  <option key={g} value={g}>
+                    {g}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Студент
+              <select
+                value={studentISU}
+                onChange={(e) => {
+                  setStudentISU(e.target.value);
+                  setPage(1);
+                }}
+              >
+                <option value="">Все студенты</option>
+                {studentOptions.map((s) => (
+                  <option key={s.isu} value={s.isu}>
+                    {studentName(s)} · {s.isu}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
-        </div>
-      </div>
-
-      <div className="analytics-content">
-        <div className="analytics-summary">
-          <div className="summary-item">
-            <span className="summary-label">Средняя посещаемость</span>
-            <strong>{summary.averageAttendancePercent.toFixed(1)}%</strong>
+          <div className="report-metrics">
+            <div>
+              <span>Лекций в выборке</span>
+              <strong>{scoped.lectures.length}</strong>
+            </div>
+            <div>
+              <span>Посещаемость по порогу</span>
+              <strong>{percentLabel(summary.attendance, summary.total)}</strong>
+              <small>
+                {summary.present} из {summary.total} студент × лекция
+              </small>
+            </div>
+            <div>
+              <span>Среднее время присутствия</span>
+              <strong>{percentLabel(summary.averagePresence, summary.total)}</strong>
+              <small>от {config.durationMinutes} минут</small>
+            </div>
+            <div>
+              <span>Без отметок</span>
+              <strong>{summary.absent}</strong>
+              <small>случаев за период</small>
+            </div>
           </div>
-          <div className="summary-item">
-            <span className="summary-label">Всего лекций</span>
-            <strong>{summary.totalLectures}</strong>
-          </div>
-          <div className="summary-item">
-            <span className="summary-label">Средняя явка</span>
-            <strong>{summary.averagePresentCount.toFixed(1)} из {summary.averageStudentsCount.toFixed(1)}</strong>
-          </div>
-        </div>
-
-        {summaryError ? <div className="analytics-warning">{summaryError}</div> : null}
-        {loading.summary ? <div className="analytics-hint">Пересчитываем сводные метрики...</div> : null}
-
-        {loading.students ? (
-          <div className="loading-overlay">
-            <div className="loading-spinner"></div>
-            <p>Загрузка данных...</p>
-          </div>
-        ) : teacherStudents.length > 0 ? (
-          <>
-            <div className="analytics-actions">
-              <div className="analytics-stats">
-                <span>Всего студентов: <strong>{studentsMeta.total}</strong></span>
-                <span>Страница: <strong>{studentsMeta.page}</strong> из <strong>{maxStudentsPage}</strong></span>
+          <p className="report-hint">
+            Расчёт по текущему составу групп. Будущие лекции исключены. «Нет отметок» означает
+            отсутствие распознаваний, а не подтверждённый пропуск.
+          </p>
+          {weeks.length > 0 && (
+            <section className="report-weekly" aria-label="Посещаемость по неделям">
+              <h4>Динамика по неделям</h4>
+              <div className="report-week-list">
+                {weeks.map((week) => {
+                  const s = summarizeAttendance(week.rows, config);
+                  return (
+                    <div key={week.key} className="report-week">
+                      <span>
+                        с{' '}
+                        {new Date(`${week.key}T00:00:00`).toLocaleDateString('ru-RU', {
+                          day: '2-digit',
+                          month: '2-digit',
+                        })}
+                      </span>
+                      <div
+                        className="report-bar"
+                        role="img"
+                        aria-label={`${week.key}: ${percentLabel(s.attendance, s.total)}`}
+                      >
+                        <i style={{ width: `${s.attendance}%` }} />
+                      </div>
+                      <strong>{percentLabel(s.attendance, s.total)}</strong>
+                      <small>
+                        {s.present}/{s.total}
+                      </small>
+                    </div>
+                  );
+                })}
               </div>
-              <button className="btn primary" onClick={exportAnalyticsToCSV}>
-                Экспорт в CSV
+            </section>
+          )}
+          <div className="report-toolbar">
+            <div className="report-tabs" role="group" aria-label="Вид отчёта">
+              {views.map((v) => (
+                <button
+                  className="report-btn"
+                  key={v.id}
+                  aria-pressed={view === v.id}
+                  onClick={() => {
+                    setView(v.id);
+                    setPage(1);
+                  }}
+                >
+                  {v.label}
+                </button>
+              ))}
+            </div>
+            <div className="report-export">
+              <button
+                className="report-btn"
+                disabled={exporting || !scoped.items.length}
+                onClick={() => void exportReport('csv')}
+              >
+                CSV
+              </button>
+              <button
+                className="report-btn"
+                disabled={exporting || !scoped.items.length}
+                onClick={() => void exportReport('xlsx')}
+              >
+                {exporting ? 'Экспорт…' : 'Excel'}
               </button>
             </div>
-
-            <div className="analytics-table-container">
-              <table className="analytics-table">
+          </div>
+          <p className="report-hint">
+            Экспорт включает все строки выбранных лекций, групп и студентов, независимо от страницы
+            и фильтра статуса.
+          </p>
+          {exportError && (
+            <p className="report-error" role="alert">
+              {exportError}
+            </p>
+          )}
+          {view === 'details' && (
+            <label className="report-status-filter">
+              Статус
+              <select
+                value={statusFilter}
+                onChange={(e) => {
+                  setStatusFilter(e.target.value);
+                  setPage(1);
+                }}
+              >
+                <option value="">Все статусы</option>
+                {Object.entries(statusLabels).map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {count === 0 ? (
+            <p className="report-empty">
+              {!scoped.lectures.length
+                ? 'За выбранный период лекций нет.'
+                : 'Нет записей для выбранных фильтров.'}
+            </p>
+          ) : (
+            <div className="report-table-scroll">
+              <table className="report-table">
                 <thead>
-                  <tr>
-                    <th title={`Был в кадре не менее ${PRESENCE_MIN_SECONDS} секунд`}>Был</th>
-                    <th>ISU</th>
-                    <th>Фамилия</th>
-                    <th>Имя</th>
-                    <th>Отчество</th>
-                    <th>Время присутствия</th>
-                    <th>Посещаемость</th>
-                    <th>Статус</th>
-                  </tr>
+                  {view === 'details' ? (
+                    <tr>
+                      <th>Дата / лекция</th>
+                      <th>Студент / ИСУ</th>
+                      <th>Группа</th>
+                      <th>Присутствие</th>
+                      <th>Статус</th>
+                    </tr>
+                  ) : (
+                    <tr>
+                      <th>{views.find((v) => v.id === view)?.label}</th>
+                      <th>Лекций</th>
+                      <th>Присутствовали</th>
+                      <th>Нет отметок</th>
+                      <th>Посещаемость</th>
+                      <th>Среднее присутствие</th>
+                    </tr>
+                  )}
                 </thead>
                 <tbody>
-                  {teacherStudents.map(student => {
-                    const seconds = Math.max(0, student.present_seconds || 0)
-                    const attendancePercent = Math.min(100, (seconds / lectureDurationSeconds) * 100)
-                    const status = getStatusByPercent(attendancePercent, presentThreshold, partialThreshold)
-                    const wasPresent = seconds >= PRESENCE_MIN_SECONDS
-                    return (
-                      <tr key={student.isu}>
-                        <td
-                          className={`presence-mark ${wasPresent ? 'present' : 'absent'}`}
-                          title={wasPresent ? 'Был' : 'Не был'}
-                          style={{
-                            textAlign: 'center',
-                            fontWeight: 700,
-                            color: wasPresent ? '#15803d' : '#b91c1c',
-                          }}
-                        >
-                          {wasPresent ? '✓' : '✗'}
-                        </td>
-                        <td>{student.isu}</td>
-                        <td>{student.last_name}</td>
-                        <td>{student.first_name}</td>
-                        <td>{student.patronymic || '-'}</td>
-                        <td>{formatSeconds(student.present_seconds)}</td>
-                        <td>
-                          <div className="presence-cell">
-                            <span>{attendancePercent.toFixed(1)}%</span>
-                            <div className="presence-bar">
-                              <div className="presence-fill" style={{ width: `${attendancePercent}%` }}></div>
-                            </div>
-                          </div>
-                        </td>
-                        <td>
-                          <span className={`status-badge ${status.className}`}>
-                            {status.label}
-                          </span>
-                        </td>
-                      </tr>
-                    )
-                  })}
+                  {view === 'details'
+                    ? detailRows.slice(sliceStart, sliceStart + 50).map((row) => (
+                        <tr key={rowKey(row)}>
+                          <td>
+                            {dateLabel(lectureById.get(row.lecture_id)!.date)}
+                            <small>№{row.lecture_id}</small>
+                          </td>
+                          <td>
+                            {studentName(row)}
+                            <small>{row.isu}</small>
+                          </td>
+                          <td>{row.group_code}</td>
+                          <td>
+                            {Math.floor(row.present_seconds / 60)} мин ·{' '}
+                            {attendancePercent(row, config).toFixed(1)}%
+                            <small>{row.detection_count} отметок</small>
+                          </td>
+                          <td>
+                            <span className={`report-status ${attendanceStatus(row, config)}`}>
+                              {statusLabels[attendanceStatus(row, config)]}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    : buckets.slice(sliceStart, sliceStart + 50).map((bucket) => {
+                        const s = summarizeAttendance(bucket.rows, config);
+                        return (
+                          <tr key={bucket.key}>
+                            <td>
+                              {view === 'lectures' ? (
+                                <>
+                                  {dateLabel(bucket.label)}
+                                  <small>№{bucket.key}</small>
+                                </>
+                              ) : (
+                                bucket.label
+                              )}
+                            </td>
+                            <td>{bucket.lectureCount}</td>
+                            <td>
+                              {s.present} / {s.total}
+                            </td>
+                            <td>{s.absent}</td>
+                            <td>{percentLabel(s.attendance, s.total)}</td>
+                            <td>{percentLabel(s.averagePresence, s.total)}</td>
+                          </tr>
+                        );
+                      })}
                 </tbody>
               </table>
             </div>
-
-            {studentsMeta.total > studentsMeta.page_size ? (
-              <div className="pagination">
-                <button
-                  className="pagination-btn"
-                  onClick={() => {
-                    if (selectedLectureId !== null && selectedGroupCode && studentsMeta.page > 1) {
-                      void loadGroupStudents(selectedLectureId, selectedGroupCode, studentsMeta.page - 1)
-                    }
-                  }}
-                  disabled={studentsMeta.page <= 1 || !selectedLectureId || !selectedGroupCode}
-                >
-                  ← Назад
-                </button>
-                <span className="pagination-info">
-                  Страница {studentsMeta.page} из {maxStudentsPage}
-                </span>
-                <button
-                  className="pagination-btn"
-                  onClick={() => {
-                    if (selectedLectureId !== null && selectedGroupCode && studentsMeta.page < maxStudentsPage) {
-                      void loadGroupStudents(selectedLectureId, selectedGroupCode, studentsMeta.page + 1)
-                    }
-                  }}
-                  disabled={studentsMeta.page >= maxStudentsPage || !selectedLectureId || !selectedGroupCode}
-                >
-                  Вперёд →
-                </button>
-              </div>
-            ) : null}
-          </>
-        ) : (
-          <div className="analytics-empty">
-            {!selectedSubjectId && !selectedLectureId && !selectedGroupCode ? (
-              <>
-                <h3>Выберите предмет, лекцию и группу</h3>
-                <p>Для просмотра статистики выберите предмет, затем лекцию и группу</p>
-              </>
-            ) : (
-              <>
-                <h3>Нет данных</h3>
-                <p>По выбранным критериям нет данных о посещаемости</p>
-              </>
-            )}
-          </div>
-        )}
-      </div>
+          )}
+          {count > 0 && (
+            <div className="report-pagination">
+              <span>Всего записей: {count}</span>
+              <button
+                className="report-btn"
+                disabled={visiblePage <= 1}
+                onClick={() => setPage(visiblePage - 1)}
+              >
+                Назад
+              </button>
+              <span>
+                {visiblePage} / {maxPage}
+              </span>
+              <button
+                className="report-btn"
+                disabled={visiblePage >= maxPage}
+                onClick={() => setPage(visiblePage + 1)}
+              >
+                Далее
+              </button>
+            </div>
+          )}
+        </>
+      )}
     </div>
-  )
+  );
 }
-
-export default TeacherAnalytics

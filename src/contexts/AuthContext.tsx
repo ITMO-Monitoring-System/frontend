@@ -100,6 +100,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loadedTokenRef = useRef<string | null>(null)
 
   useEffect(() => {
+    mountedRef.current = true
     return () => {
       mountedRef.current = false
     }

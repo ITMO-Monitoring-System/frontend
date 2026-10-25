@@ -22,34 +22,36 @@
   display: flex;
   align-items: center;
   box-sizing: border-box;
+  gap: 16px;
 }
 
 .header-left {
-  width: 140px; /* reserve space equal to actions width */
-  min-width: 80px;
+  display: none;
 }
 
 .header-center {
-  position: absolute;
-  left: 1%;
-  transform: translateX(-50%);
   font-size: 18px;
   font-weight: 700;
   color: #0f172a;
-  white-space: nowrap;
-  text-align: center;
+  min-width: 0;
+  text-align: left;
   pointer-events: none; /* so clicks go to actions if overlap */
 }
 
 /* Right-side actions (user + logout) */
 .header-actions {
-  margin-left: 95%;
+  margin-left: auto;
   display: flex;
   gap: 12px;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .header-user {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 14px;
   color: #0f172a;
   font-weight: 600;

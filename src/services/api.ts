@@ -1,4 +1,5 @@
 import axios, { type AxiosProgressEvent } from 'axios'
+import type { TeacherReport } from '../utils/teacherReport'
 import { AuthTokenStorage } from './authToken'
 import type { Department, Face, Group, Lecture, Practice, Subject, User } from '../types'
 
@@ -69,6 +70,9 @@ export const createUser = (payload: {
   last_name: string
   patronymic: string
   password: string
+  roles?: string[]
+  department_id?: number
+  group_code?: string
 }) => api.post('/api/user/admin/create', payload)
 
 export const addRole = (payload: {
@@ -101,6 +105,9 @@ export const listGroups = () => api.get('/groups')
 
 export const createDepartment = (payload: { code: string; name: string; alias?: string }) =>
   api.post<{ id: number; code: string; name: string; alias?: string }>('/api/departments', payload)
+
+export const updateDepartment = (id: number, payload: { code: string; name: string; alias: string | null }) =>
+  api.put<Department>(`/api/departments/${encodeURIComponent(String(id))}`, payload)
 
 export const deleteDepartment = (id: number) =>
   api.delete(`/api/departments/${encodeURIComponent(String(id))}`)
@@ -315,5 +322,8 @@ export const getLectureGroupStudents = (
     lecture_id: number
     meta: { page: number; page_size: number; total: number }
   }>(`/api/visits/teacher/${encodeURIComponent(String(lectureId))}/${encodeURIComponent(groupCode)}/students`, { params })
+
+export const getTeacherReport = (subjectId: number, params: { date_from: string; date_to: string; gap_seconds: number }, signal?: AbortSignal) =>
+  api.get<TeacherReport>(`/api/visits/teacher/${encodeURIComponent(String(subjectId))}/report`, { params, signal })
 
 export default api
