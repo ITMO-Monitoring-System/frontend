@@ -31,6 +31,12 @@ const FRAME_WS_BASE = trimTrailingSlash(import.meta.env.VITE_WS_BASE?.trim() || 
 const EVENTS_WS_BASE = trimTrailingSlash(import.meta.env.VITE_WS_EVENTS?.trim() || toWsOrigin(API_BASE))
 
 const frameApi = axios.create({ baseURL: FRAME_API_BASE })
+const lectureErrorMessage = (error: unknown) => {
+  if (axios.isAxiosError(error)) {
+    return error.response?.data?.detail ?? error.response?.data?.message ?? error.message
+  }
+  return error instanceof Error ? error.message : String(error)
+}
 frameApi.interceptors.request.use((cfg: any) => {
   const token = AuthTokenStorage.get()
   if (token) cfg.headers = { ...(cfg.headers || {}), Authorization: `Bearer ${token}` }
@@ -88,7 +94,7 @@ export default function LectureView() {
   // Локальные bbox-ы от face-tracking (нормализованные [x,y,w,h]) — все видимые лица, без user-инфы.
   const [localFaces, setLocalFaces] = useState<[number, number, number, number][]>([])
   const [attendance, setAttendance] = useState<Record<string, AttendanceEntry>>({})
-  const [status, setStatus] = useState<'idle'|'starting'|'running'|'error'|'stopped'>('idle')
+  const [status, setStatus] = useState<'idle'|'starting'|'running'|'stopping'|'error'|'stopped'>('idle')
   const currentLectureId = useRef<number | null>(null)
   const sessionAttendanceRef = useRef<Record<number, Set<string>>>({})
   const usersByIdRef = useRef<Record<string, string>>({})
@@ -617,14 +623,16 @@ export default function LectureView() {
       setAttendance({})
       setDetections([])
       setStatus('running')
-    } catch (err: any) {
+    } catch (err: unknown) {
+      currentLectureId.current = null
       setStatus('error')
-      alert('Не удалось запустить лекцию: ' + (err?.response?.data?.detail ?? err?.response?.data?.message ?? err?.message ?? 'unknown'))
+      alert('Не удалось запустить лекцию: ' + lectureErrorMessage(err))
     }
   }
 
   const stopSession = async () => {
     const lid = currentLectureId.current
+    setStatus('stopping')
     try {
       const now = Date.now()
       const snapshot = Object.entries(attendance).map(([id, r]) => {
@@ -644,9 +652,12 @@ export default function LectureView() {
         eventsSocketRef.current = null
       }
       if (lid !== null) { await endLectureFrame(lid, { if_unused: false, if_empty: false }); currentLectureId.current = null }
-    } catch {}
-    finally {
       setStatus('stopped')
+    } catch (err: unknown) {
+      setStatus('error')
+      alert('Не удалось завершить лекцию: ' + lectureErrorMessage(err))
+    }
+    finally {
       setDetections([])
       setLocalFaces([])
       setAttendance({})
@@ -729,15 +740,16 @@ export default function LectureView() {
               />
 
               <div className="lecture-actions unified">
-                {status !== 'running' ? (
+                {status !== 'running' && currentLectureId.current === null ? (
                   <button
                     className="btn primary"
                     onClick={startSession}
+                    disabled={status === 'starting'}
                   >
                     Начать лекцию
                   </button>
                 ) : (
-                  <button className="btn secondary" onClick={stopSession}>Остановить лекцию</button>
+                  <button className="btn secondary" onClick={stopSession} disabled={status === 'stopping'}>Остановить лекцию</button>
                 )}
                 <button className="btn" onClick={exportCurrentSession}>Скачать .csv (сессия)</button>
                 <button className="btn" onClick={exportByLectures}>Скачать .csv (по лекциям)</button>
