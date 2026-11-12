@@ -520,9 +520,7 @@ export default function LectureView() {
     if (v.srcObject !== stream) {
       v.srcObject = stream
     }
-    if (stream) {
-      setHasFrame(prev => prev ? prev : true)
-    }
+    setHasFrame(Boolean(stream))
   }, [])
 
   // Локальные bbox-ы лиц от face-tracking — рисуются canvas-overlay поверх <video>.
@@ -595,8 +593,10 @@ export default function LectureView() {
   const getLectureId = useCallback(() => currentLectureId.current, [])
 
   const startSession = async () => {
+    let startedLectureId: number | null = null
     try {
       setStatus('starting')
+      await cameraSenderRef.current?.prepare()
       let lectureId: number
       if (selectedLectureId !== '') {
         lectureId = selectedLectureId as number
@@ -607,26 +607,31 @@ export default function LectureView() {
       const returnedRaw = res?.data?.lecture_id ?? res?.data?.lectureId ?? lectureId
       const returnedNum = Number(returnedRaw)
       const finalId = Number.isFinite(returnedNum) ? returnedNum : lectureId
+      startedLectureId = finalId
       currentLectureId.current = finalId
 
       // Connect events WebSocket (backend → frontend for recognition results)
       connectEventsWs()
       sendSubscribe(finalId)
 
-      // CameraSender will start via imperative ref
-      try {
-        await cameraSenderRef.current?.start()
-      } catch (err) {
-        console.warn('CameraSender start failed:', err)
-      }
+      await cameraSenderRef.current?.start()
 
       setAttendance({})
       setDetections([])
       setStatus('running')
     } catch (err: unknown) {
-      currentLectureId.current = null
+      cameraSenderRef.current?.stop()
+      if (startedLectureId !== null) {
+        subscriptionsRef.current.delete(startedLectureId)
+      }
+      if (eventsSocketRef.current) {
+        eventsSocketRef.current.close(1000)
+        eventsSocketRef.current = null
+      }
+      currentLectureId.current = startedLectureId
       setStatus('error')
-      alert('Не удалось запустить лекцию: ' + lectureErrorMessage(err))
+      alert((startedLectureId === null ? 'Не удалось запустить лекцию: ' : 'Не удалось запустить видеопоток: ') + lectureErrorMessage(err) +
+        (startedLectureId !== null ? '. Лекция могла запуститься на сервере: нажмите «Остановить лекцию».' : ''))
     }
   }
 

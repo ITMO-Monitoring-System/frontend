@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useCallback, useImperativeHandle, forwardRef } from 'react'
-import useCamera from '../hooks/useCamera'
+import useCamera, { FULL_HD_HEIGHT, FULL_HD_WIDTH } from '../hooks/useCamera'
 
 export type CameraSenderHandle = {
+  prepare: () => Promise<void>
   start: () => Promise<void>
   stop: () => void
   isRunning: () => boolean
@@ -10,8 +11,6 @@ export type CameraSenderHandle = {
 type Props = {
   getLectureId: () => number | null
   frameWsBase?: string
-  idealWidth?: number
-  idealHeight?: number
   initialFps?: number
   /** Called when a JSON event is received from face-tracking (auto_publish, recognize_result, error) */
   onServerEvent?: (event: any) => void
@@ -31,8 +30,6 @@ const DEFAULT_WS = (import.meta.env.VITE_WS_BASE?.trim() || (() => {
 const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender({
   getLectureId,
   frameWsBase = DEFAULT_WS,
-  idealWidth = 1280,
-  idealHeight = 720,
   initialFps = 5,
   onServerEvent,
   onLocalDetections,
@@ -44,10 +41,12 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
     devices,
     activeDeviceId,
     setActiveDeviceId,
+    cameraMode,
     openDevice,
     closeStream,
     ensurePermissionAndList,
     error: cameraError,
+    getCurrentStream,
   } = useCamera()
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -66,19 +65,11 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
   const onStreamRef = useRef(onStream)
   onStreamRef.current = onStream
 
-  // Прокидываем MediaStream наружу — родитель показывает live-video, а CameraSender
-  // продолжает использовать тот же поток для захвата кадров в canvas.
+  // Показываем родителю только поток, прошедший проверку Full HD.
   useEffect(() => {
-    const v = videoRef.current
-    if (!v) return
-    const handler = () => onStreamRef.current?.((v.srcObject as MediaStream | null) ?? null)
-    handler()
-    v.addEventListener('loadedmetadata', handler)
-    return () => {
-      v.removeEventListener('loadedmetadata', handler)
-      onStreamRef.current?.(null)
-    }
-  }, [activeDeviceId])
+    onStreamRef.current?.(cameraMode ? getCurrentStream() : null)
+    return () => onStreamRef.current?.(null)
+  }, [cameraMode, getCurrentStream])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -179,21 +170,36 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
     } catch {}
   }
 
-  const ensureCanvas = () => {
+  const ensureCanvas = (width: number, height: number) => {
     if (!canvasRef.current) {
-      const canvas = document.createElement('canvas')
-      canvas.width = idealWidth
-      canvas.height = idealHeight
-      canvasRef.current = canvas
+      canvasRef.current = document.createElement('canvas')
     }
+    if (canvasRef.current.width !== width) canvasRef.current.width = width
+    if (canvasRef.current.height !== height) canvasRef.current.height = height
     return canvasRef.current
   }
 
   const sendFrameOnce = async () => {
     const video = videoRef.current
-    if (!video || video.readyState !== 4) return
+    if (!video) return
 
-    const canvas = ensureCanvas()
+    const stream = getCurrentStream()
+    const track = stream?.getVideoTracks()[0]
+    const settings = track?.getSettings() as (MediaTrackSettings & { resizeMode?: string }) | undefined
+    if (
+      !stream || video.srcObject !== stream ||
+      settings?.width !== FULL_HD_WIDTH || settings.height !== FULL_HD_HEIGHT ||
+      settings.resizeMode !== 'none' ||
+      video.videoWidth !== FULL_HD_WIDTH || video.videoHeight !== FULL_HD_HEIGHT
+    ) {
+      stopSendingInternal()
+      closeSocket()
+      setLocalError('Поток камеры перестал выдавать Full HD 1920×1080 без масштабирования')
+      return
+    }
+    if (video.readyState !== HTMLMediaElement.HAVE_ENOUGH_DATA) return
+
+    const canvas = ensureCanvas(video.videoWidth, video.videoHeight)
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
@@ -206,33 +212,41 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
     } catch {}
   }
 
+  const prepareCamera = async () => {
+    const deviceId = activeDeviceId || devices[0]?.deviceId
+    if (!deviceId) {
+      const message = 'Нет доступных камер'
+      setLocalError(message)
+      throw new Error(message)
+    }
+    try {
+      await openDevice(deviceId)
+      setLocalError('')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setLocalError(message)
+      throw err
+    }
+  }
+
   const startSending = useCallback(async () => {
     if (running) return
 
     const lectureId = getLectureId()
     if (!lectureId) {
-      setLocalError('Не выбрана лекция')
+      const message = 'Не выбрана лекция'
+      setLocalError(message)
       setStatus('error')
-      return
+      throw new Error(message)
     }
 
-    // Open camera if not yet
-    if (!activeDeviceId && devices.length > 0) {
-      try {
-        await openDevice(devices[0].deviceId)
-      } catch {
-        setLocalError('Не удалось открыть камеру')
-        return
-      }
-    } else if (!activeDeviceId) {
-      setLocalError('Нет доступных камер')
-      return
-    }
+    await prepareCamera()
 
     const socket = openSocketForLecture(lectureId)
     if (!socket) {
-      setLocalError('Не удалось подключиться к серверу')
-      return
+      const message = 'Не удалось подключиться к серверу'
+      setLocalError(message)
+      throw new Error(message)
     }
 
     // Wait for WebSocket to connect
@@ -245,6 +259,12 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
         socket.addEventListener('open', () => { clearTimeout(timeout); resolve() }, { once: true })
       }
     })
+    if (socket.readyState !== WebSocket.OPEN) {
+      closeSocket()
+      const message = 'Сервер не открыл видеопоток за 2 секунды'
+      setLocalError(message)
+      throw new Error(message)
+    }
 
     const tick = Math.max(1, Math.round(1000 / Math.max(1, fps)))
     intervalRef.current = window.setInterval(() => {
@@ -267,19 +287,16 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
 
   // Expose imperative handle for parent control
   useImperativeHandle(ref, () => ({
+    prepare: prepareCamera,
     start: startSending,
     stop: () => { stopSendingInternal(); closeSocket() },
     isRunning: () => running,
-  }), [startSending, running])
+  }), [prepareCamera, startSending, running])
 
-  const handleDeviceChange = async (deviceId: string) => {
-    try {
-      setActiveDeviceId(deviceId)
-      await openDevice(deviceId)
-      setLocalError('')
-    } catch (err) {
-      setLocalError(`Не удалось переключить камеру: ${err}`)
-    }
+  const handleDeviceChange = (deviceId: string) => {
+    if (deviceId) setActiveDeviceId(deviceId)
+    else closeStream()
+    setLocalError('')
   }
 
   const handleStartClick = async () => {
@@ -299,10 +316,12 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
 
   const handleRequestPermission = async () => {
     try {
-      await ensurePermissionAndList()
+      const available = await ensurePermissionAndList()
+      const deviceId = available.find(device => device.deviceId === activeDeviceId)?.deviceId || available[0]?.deviceId
+      if (deviceId) await openDevice(deviceId)
       setLocalError('')
     } catch (err) {
-      setLocalError(`Ошибка разрешения: ${err}`)
+      setLocalError(`Ошибка камеры: ${err}`)
     }
   }
 
@@ -371,9 +390,17 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
         </div>
       )}
 
+      {cameraMode && (
+        <div style={{ marginTop: 4, fontSize: 11, color: '#374151' }}>
+          Поток камеры: {cameraMode.width}×{cameraMode.height}
+          {cameraMode.frameRate ? ` • ${cameraMode.frameRate} fps` : ''}
+          {' • без масштабирования браузером'}
+        </div>
+      )}
+
       <div style={{ marginTop: 4, fontSize: 11, color: '#9ca3af' }}>
         {running ? `Отправка ${fps} fps` : 'Ожидание'}
-        {activeDeviceId ? ` • камера подключена` : ''}
+        {cameraMode ? ' • камера готова' : ''}
         {wsRef.current?.readyState === WebSocket.OPEN ? ' • WS подключён' : ''}
       </div>
     </div>
