@@ -49,9 +49,8 @@ frameApi.interceptors.request.use((cfg: any) => {
   return cfg
 })
 
-const startLectureFrame = async (lectureId?: number, body: any = { durable: true, auto_delete: false }) => {
-  const lid = lectureId ?? Date.now()
-  return frameApi.post(`api/lectures/${encodeURIComponent(String(lid))}/start`, body)
+const startLectureFrame = async (lectureId: number, body: any = { durable: true, auto_delete: false }) => {
+  return frameApi.post(`api/lectures/${encodeURIComponent(String(lectureId))}/start`, body)
 }
 
 const endLectureFrame = async (lectureId: number, body: any = { if_unused: false, if_empty: false }) => {
@@ -112,8 +111,9 @@ export default function LectureView() {
   const [newGroupIds, setNewGroupIds] = useState<string[]>([])
   const [availableSubjects, setAvailableSubjects] = useState<Subject[]>([])
   const [availableDepartments, setAvailableDepartments] = useState<Department[]>([])
-  const [selectedDepartmentId, setSelectedDepartmentId] = useState<number | ''>('')
-  const [availableGroups, setAvailableGroups] = useState<Group[]>([])
+  const [selectedDepartmentIds, setSelectedDepartmentIds] = useState<number[]>([])
+  const [groupsByDepartment, setGroupsByDepartment] = useState<Record<number, Group[]>>({})
+  const [failedDepartmentIds, setFailedDepartmentIds] = useState<number[]>([])
   const [showAnalyticsModal, setShowAnalyticsModal] = useState(false)
 
   const subscriptionsRef = useRef<Set<number>>(new Set())
@@ -203,6 +203,37 @@ export default function LectureView() {
   }, [user])
 
   useEffect(() => {
+    const missing = selectedDepartmentIds.filter(
+      id => groupsByDepartment[id] === undefined && !failedDepartmentIds.includes(id)
+    )
+    if (missing.length === 0) return
+
+    let cancelled = false
+    Promise.all(missing.map(async id => {
+      try {
+        const res = await listGroupsByDepartment(id)
+        return { id, groups: res.data || [], failed: false }
+      } catch {
+        return { id, groups: [], failed: true }
+      }
+    })).then(results => {
+      if (cancelled) return
+      setGroupsByDepartment(previous => {
+        const next = { ...previous }
+        results.forEach(({ id, groups, failed }) => {
+          if (!failed) next[id] = groups
+        })
+        return next
+      })
+      setFailedDepartmentIds(previous => [
+        ...new Set([...previous, ...results.filter(result => result.failed).map(result => result.id)]),
+      ])
+    })
+
+    return () => { cancelled = true }
+  }, [selectedDepartmentIds, groupsByDepartment, failedDepartmentIds])
+
+  useEffect(() => {
     timeoutCheckerRef.current = window.setInterval(() => {
       const now = Date.now()
       setAttendance(prev => {
@@ -248,8 +279,9 @@ export default function LectureView() {
     setIsPractice(practice)
     setAvailableDepartments([])
     setAvailableSubjects([])
-    setAvailableGroups([])
-    setSelectedDepartmentId('')
+    setGroupsByDepartment({})
+    setFailedDepartmentIds([])
+    setSelectedDepartmentIds([])
     setNewGroupIds([])
     setNewSubjectId('')
     setNewLectureDate('')
@@ -261,23 +293,17 @@ export default function LectureView() {
     } catch {
       setAvailableDepartments([])
       setAvailableSubjects([])
-      setAvailableGroups([])
     }
   }
 
-  const onDepartmentChange = async (v: string) => {
-    const id = v ? parseInt(v, 10) : ''
-    setSelectedDepartmentId(id === '' ? '' : id)
-    setAvailableGroups([])
-    setNewGroupIds([])
-    if (id !== '') {
-      try {
-        const res = await listGroupsByDepartment(id)
-        setAvailableGroups(res.data || [])
-      } catch {
-        setAvailableGroups([])
-      }
-    }
+  const onDepartmentToggle = (id: number) => {
+    const next = selectedDepartmentIds.includes(id)
+      ? selectedDepartmentIds.filter(selectedId => selectedId !== id)
+      : [...selectedDepartmentIds, id]
+    const validGroups = new Set(next.flatMap(departmentId => groupsByDepartment[departmentId] || []).map(group => group.code))
+    setSelectedDepartmentIds(next)
+    setFailedDepartmentIds(previous => previous.filter(failedId => failedId !== id))
+    setNewGroupIds(previous => previous.filter(code => validGroups.has(code)))
   }
 
   const createLectureOrPracticeHandler = async () => {
@@ -305,7 +331,9 @@ export default function LectureView() {
         group_ids: newGroupIds,
         teacher_id: teacherIsu,
       }
-      await createLecture(payload)
+      const created = await createLecture(payload)
+      setLectures(previous => [created.data, ...previous.filter(lecture => lecture.id !== created.data.id)])
+      setSelectedLectureId(created.data.id)
       setShowCreateModal(false)
       setNewLectureDate('')
       setNewSubjectId('')
@@ -629,6 +657,10 @@ export default function LectureView() {
 
   const startSession = async () => {
     if (sessionActionRef.current || currentLectureId.current !== null) return
+    if (selectedLectureId === '') {
+      alert('Выберите лекцию из списка или создайте новую')
+      return
+    }
     sessionActionRef.current = 'starting'
     let startedLectureId: number | null = null
     try {
@@ -637,12 +669,7 @@ export default function LectureView() {
       if (!sender) throw new Error('Камера ещё не готова к запуску')
       await sender.prepare()
       if (!mountedRef.current) return
-      let lectureId: number
-      if (selectedLectureId !== '') {
-        lectureId = selectedLectureId as number
-      } else {
-        lectureId = Date.now()
-      }
+      const lectureId = selectedLectureId
       const res = await startLectureFrame(lectureId, { durable: true, auto_delete: false })
       if (!mountedRef.current) return
       const returnedRaw = res?.data?.lecture_id ?? res?.data?.lectureId ?? lectureId
@@ -923,35 +950,53 @@ export default function LectureView() {
                 </div>
 
                 <div className="form-group">
-                  <label>Направление</label>
-                  <select
-                    className="form-input"
-                    value={selectedDepartmentId}
-                    onChange={e => onDepartmentChange(e.target.value)}
-                  >
-                    <option value="">Выберите направление</option>
+                  <label>Направления</label>
+                  <div className="selection-list" role="group" aria-label="Направления">
                     {availableDepartments.map(d => (
-                      <option key={d.id} value={String(d.id)}>{d.code} – {d.name}</option>
+                      <label className="selection-option" key={d.id}>
+                        <input
+                          type="checkbox"
+                          checked={selectedDepartmentIds.includes(d.id)}
+                          onChange={() => onDepartmentToggle(d.id)}
+                        />
+                        <span>{d.code} – {d.name}</span>
+                      </label>
                     ))}
-                  </select>
+                  </div>
                 </div>
 
                 <div className="form-group">
-                  <label>Группы</label>
-                  <select
-                    className="form-input"
-                    multiple
-                    value={newGroupIds}
-                    onChange={e => {
-                      const selected = Array.from(e.target.selectedOptions, option => option.value)
-                      setNewGroupIds(selected)
-                    }}
-                    style={{ height: 120 }}
-                  >
-                    {availableGroups.map(g => (
-                      <option key={g.code} value={g.code}>{g.name || g.code}</option>
+                  <label>Группы · выбрано: {newGroupIds.length}</label>
+                  <div className="selection-list" role="group" aria-label="Группы">
+                    {selectedDepartmentIds.length === 0 && <span className="selection-empty">Выберите направления</span>}
+                    {selectedDepartmentIds.map(departmentId => (
+                      <div key={departmentId}>
+                        <div className="selection-heading">
+                          {availableDepartments.find(department => department.id === departmentId)?.code}
+                        </div>
+                        {failedDepartmentIds.includes(departmentId) ? (
+                          <button className="selection-retry" type="button" onClick={() => setFailedDepartmentIds(previous => previous.filter(id => id !== departmentId))}>
+                            Не удалось загрузить группы. Повторить
+                          </button>
+                        ) : groupsByDepartment[departmentId] === undefined ? (
+                          <span className="selection-empty">Загрузка групп…</span>
+                        ) : groupsByDepartment[departmentId].length === 0 ? (
+                          <span className="selection-empty">Групп нет</span>
+                        ) : groupsByDepartment[departmentId].map(group => (
+                          <label className="selection-option" key={group.code}>
+                            <input
+                              type="checkbox"
+                              checked={newGroupIds.includes(group.code)}
+                              onChange={() => setNewGroupIds(previous => previous.includes(group.code)
+                                ? previous.filter(code => code !== group.code)
+                                : [...previous, group.code])}
+                            />
+                            <span>{group.name || group.code}</span>
+                          </label>
+                        ))}
+                      </div>
                     ))}
-                  </select>
+                  </div>
                 </div>
 
                 <div className="form-group">

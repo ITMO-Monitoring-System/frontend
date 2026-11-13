@@ -376,6 +376,48 @@
   background: #fff;
 }
 
+.selection-list {
+  min-height: 120px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid #e6e9ef;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.selection-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 6px;
+  cursor: pointer;
+}
+
+.selection-option input {
+  margin-top: 3px;
+}
+
+.selection-heading {
+  padding: 8px 6px 4px;
+  font-weight: 600;
+}
+
+.selection-empty {
+  display: block;
+  padding: 6px;
+  color: #6b7280;
+}
+
+.selection-retry {
+  padding: 6px;
+  border: 0;
+  background: transparent;
+  color: #0757b9;
+  cursor: pointer;
+  text-align: left;
+}
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;
