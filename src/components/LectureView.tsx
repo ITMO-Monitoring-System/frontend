@@ -9,6 +9,7 @@ import { AuthTokenStorage } from '../services/authToken'
 import TeacherAnalytics from './TeacherAnalytics'
 import CameraSender from './CameraSender'
 import type { CameraSenderHandle } from './CameraSender'
+import type { CameraStreamState } from '../services/cameraStream'
 import {
   listDepartments,
   listGroupsByDepartment,
@@ -88,6 +89,8 @@ export default function LectureView() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const eventsSocketRef = useRef<WebSocket | null>(null)
   const cameraSenderRef = useRef<CameraSenderHandle | null>(null)
+  const sessionActionRef = useRef<'starting' | 'retrying' | 'stopping' | null>(null)
+  const mountedRef = useRef(false)
 
   const [hasFrame, setHasFrame] = useState<boolean>(false)
   const [detections, setDetections] = useState<Detection[]>([])
@@ -95,6 +98,7 @@ export default function LectureView() {
   const [localFaces, setLocalFaces] = useState<[number, number, number, number][]>([])
   const [attendance, setAttendance] = useState<Record<string, AttendanceEntry>>({})
   const [status, setStatus] = useState<'idle'|'starting'|'running'|'stopping'|'error'|'stopped'>('idle')
+  const [activeLectureId, setActiveLectureId] = useState<number | null>(null)
   const currentLectureId = useRef<number | null>(null)
   const sessionAttendanceRef = useRef<Record<number, Set<string>>>({})
   const usersByIdRef = useRef<Record<string, string>>({})
@@ -122,14 +126,31 @@ export default function LectureView() {
   const pendingUpsertsRef = useRef<any[]>([])
   const rafIdRef = useRef<number | null>(null)
 
+  const closeEventsWs = useCallback(() => {
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
+    const socket = eventsSocketRef.current
+    eventsSocketRef.current = null
+    if (socket) {
+      socket.onopen = null
+      socket.onmessage = null
+      socket.onclose = null
+      socket.onerror = null
+      try { socket.close(1000) } catch { /* Already closing. */ }
+    }
+  }, [])
+
   useEffect(() => {
+    mountedRef.current = true
     return () => {
-      if (eventsSocketRef.current) { try { eventsSocketRef.current.close() } catch {} ; eventsSocketRef.current = null }
-      if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current)
+      mountedRef.current = false
+      closeEventsWs()
       if (timeoutCheckerRef.current) window.clearInterval(timeoutCheckerRef.current)
       if (rafIdRef.current !== null) { window.cancelAnimationFrame(rafIdRef.current); rafIdRef.current = null }
     }
-  }, [])
+  }, [closeEventsWs])
 
   useEffect(() => {
     const video = videoRef.current
@@ -526,13 +547,12 @@ export default function LectureView() {
   // Локальные bbox-ы лиц от face-tracking — рисуются canvas-overlay поверх <video>.
   const handleLocalDetections = useCallback((
     faces: [number, number, number, number][],
-    _frameWh: [number, number],
   ) => {
     setLocalFaces(faces)
   }, [])
 
   // JSON events from face-tracking via CameraSender WebSocket
-  const handleServerEvent = useCallback((event: any) => {
+  const handleServerEvent = useCallback((event: Record<string, unknown>) => {
     if (!event) return
     if (event.type === 'auto_publish' || event.type === 'recognize_result') {
       // These are acknowledgements from face-tracking, not detections
@@ -544,26 +564,39 @@ export default function LectureView() {
     }
   }, [])
 
+  const handleCameraState = useCallback((state: CameraStreamState) => {
+    if (sessionActionRef.current || currentLectureId.current === null) return
+    if (state === 'error' || state === 'idle') {
+      setStatus('error')
+      setLocalFaces([])
+    }
+  }, [])
+
   const connectEventsWs = () => {
+    if (!mountedRef.current || subscriptionsRef.current.size === 0) return null
     if (eventsSocketRef.current && (eventsSocketRef.current.readyState === WebSocket.OPEN || eventsSocketRef.current.readyState === WebSocket.CONNECTING)) return eventsSocketRef.current
     try {
       const wsUrl = `${EVENTS_WS_BASE}/api/ws`
       const socket = new WebSocket(wsUrl)
       eventsSocketRef.current = socket
       socket.onopen = () => {
+        if (eventsSocketRef.current !== socket) return
         subscriptionsRef.current.forEach(id => {
           socket.send(JSON.stringify({ action: 'subscribe', lecture_id: id.toString() }))
         })
       }
       socket.onmessage = (ev: MessageEvent) => {
+        if (eventsSocketRef.current !== socket) return
         handleEventsRaw(ev.data)
       }
       socket.onerror = () => {}
       socket.onclose = (ev) => {
+        if (eventsSocketRef.current !== socket) return
         eventsSocketRef.current = null
-        if (ev.code !== 1000) {
+        if (ev.code !== 1000 && subscriptionsRef.current.size > 0 && mountedRef.current) {
           if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current)
           reconnectTimerRef.current = window.setTimeout(() => {
+            reconnectTimerRef.current = null
             connectEventsWs()
           }, 2000)
         }
@@ -587,16 +620,23 @@ export default function LectureView() {
     subscriptionsRef.current.delete(lectureId)
     const socket = eventsSocketRef.current
     if (!socket || socket.readyState !== WebSocket.OPEN) return
-    socket.send(JSON.stringify({ action: 'unsubscribe', lecture_id: lectureId.toString() }))
+    try {
+      socket.send(JSON.stringify({ action: 'unsubscribe', lecture_id: lectureId.toString() }))
+    } catch { /* Closing a socket must not prevent the lecture stop request. */ }
   }
 
   const getLectureId = useCallback(() => currentLectureId.current, [])
 
   const startSession = async () => {
+    if (sessionActionRef.current || currentLectureId.current !== null) return
+    sessionActionRef.current = 'starting'
     let startedLectureId: number | null = null
     try {
       setStatus('starting')
-      await cameraSenderRef.current?.prepare()
+      const sender = cameraSenderRef.current
+      if (!sender) throw new Error('Камера ещё не готова к запуску')
+      await sender.prepare()
+      if (!mountedRef.current) return
       let lectureId: number
       if (selectedLectureId !== '') {
         lectureId = selectedLectureId as number
@@ -604,38 +644,65 @@ export default function LectureView() {
         lectureId = Date.now()
       }
       const res = await startLectureFrame(lectureId, { durable: true, auto_delete: false })
+      if (!mountedRef.current) return
       const returnedRaw = res?.data?.lecture_id ?? res?.data?.lectureId ?? lectureId
       const returnedNum = Number(returnedRaw)
       const finalId = Number.isFinite(returnedNum) ? returnedNum : lectureId
       startedLectureId = finalId
       currentLectureId.current = finalId
+      setActiveLectureId(finalId)
 
       // Connect events WebSocket (backend → frontend for recognition results)
-      connectEventsWs()
       sendSubscribe(finalId)
-
-      await cameraSenderRef.current?.start()
 
       setAttendance({})
       setDetections([])
+      await sender.start()
+      if (!mountedRef.current) return
+      if (!sender.isRunning()) throw new Error('Видеопоток прервался при запуске')
       setStatus('running')
     } catch (err: unknown) {
+      if (!mountedRef.current) return
       cameraSenderRef.current?.stop()
       if (startedLectureId !== null) {
         subscriptionsRef.current.delete(startedLectureId)
       }
-      if (eventsSocketRef.current) {
-        eventsSocketRef.current.close(1000)
-        eventsSocketRef.current = null
-      }
+      closeEventsWs()
       currentLectureId.current = startedLectureId
+      setActiveLectureId(startedLectureId)
       setStatus('error')
       alert((startedLectureId === null ? 'Не удалось запустить лекцию: ' : 'Не удалось запустить видеопоток: ') + lectureErrorMessage(err) +
-        (startedLectureId !== null ? '. Лекция могла запуститься на сервере: нажмите «Остановить лекцию».' : ''))
+        (startedLectureId !== null ? '. Нажмите «Подключить видео повторно» или «Остановить лекцию».' : ''))
+    } finally {
+      sessionActionRef.current = null
+    }
+  }
+
+  const retryVideo = async () => {
+    const lectureId = currentLectureId.current
+    if (lectureId === null || sessionActionRef.current) return
+    sessionActionRef.current = 'retrying'
+    setStatus('starting')
+    try {
+      const sender = cameraSenderRef.current
+      if (!sender) throw new Error('Камера ещё не готова к запуску')
+      sendSubscribe(lectureId)
+      await sender.start()
+      if (!sender.isRunning()) throw new Error('Видеопоток прервался при подключении')
+      if (mountedRef.current) setStatus('running')
+    } catch (err: unknown) {
+      if (!mountedRef.current) return
+      cameraSenderRef.current?.stop()
+      setStatus('error')
+      alert('Не удалось подключить видео: ' + lectureErrorMessage(err))
+    } finally {
+      sessionActionRef.current = null
     }
   }
 
   const stopSession = async () => {
+    if (sessionActionRef.current) return
+    sessionActionRef.current = 'stopping'
     const lid = currentLectureId.current
     setStatus('stopping')
     try {
@@ -651,18 +718,20 @@ export default function LectureView() {
       // Stop CameraSender (closes its WebSocket)
       cameraSenderRef.current?.stop()
 
-      if (eventsSocketRef.current) {
-        if (lid !== null) sendUnsubscribe(lid)
-        try { eventsSocketRef.current.close() } catch {}
-        eventsSocketRef.current = null
+      if (lid !== null) sendUnsubscribe(lid)
+      closeEventsWs()
+      if (lid !== null) {
+        await endLectureFrame(lid, { if_unused: false, if_empty: false })
+        currentLectureId.current = null
+        setActiveLectureId(null)
       }
-      if (lid !== null) { await endLectureFrame(lid, { if_unused: false, if_empty: false }); currentLectureId.current = null }
       setStatus('stopped')
     } catch (err: unknown) {
       setStatus('error')
       alert('Не удалось завершить лекцию: ' + lectureErrorMessage(err))
     }
     finally {
+      sessionActionRef.current = null
       setDetections([])
       setLocalFaces([])
       setAttendance({})
@@ -672,14 +741,15 @@ export default function LectureView() {
   }
 
   const onSelectLecture = (val: string) => {
+    if (sessionActionRef.current || currentLectureId.current !== null) return
     const id = val ? parseInt(val, 10) : ''
     const prev = currentLectureId.current
     setSelectedLectureId(id === '' ? '' : id)
     if (eventsSocketRef.current && prev !== null) {
-      try { sendUnsubscribe(prev) } catch {}
+      try { sendUnsubscribe(prev) } catch { /* The old events socket may have closed. */ }
     }
     if (eventsSocketRef.current && id !== '') {
-      try { eventsSocketRef.current.send(JSON.stringify({ action: 'subscribe', lecture_id: id.toString() })) } catch {}
+      try { eventsSocketRef.current.send(JSON.stringify({ action: 'subscribe', lecture_id: id.toString() })) } catch { /* Reconnect subscribes again. */ }
       subscriptionsRef.current.add(id as number)
     }
   }
@@ -722,6 +792,7 @@ export default function LectureView() {
                   className="lecture-select"
                   value={selectedLectureId}
                   onChange={e => onSelectLecture(e.target.value)}
+                  disabled={activeLectureId !== null || status === 'starting' || status === 'stopping'}
                 >
                   <option value="">-- выберите лекцию --</option>
                   {lectures.map(lec => (
@@ -742,10 +813,13 @@ export default function LectureView() {
                 onLocalDetections={handleLocalDetections}
                 onServerEvent={handleServerEvent}
                 onStream={handleStream}
+                onStateChange={handleCameraState}
+                showControls={false}
+                disabled={status === 'starting' || status === 'stopping'}
               />
 
               <div className="lecture-actions unified">
-                {status !== 'running' && currentLectureId.current === null ? (
+                {status !== 'running' && activeLectureId === null ? (
                   <button
                     className="btn primary"
                     onClick={startSession}
@@ -754,7 +828,10 @@ export default function LectureView() {
                     Начать лекцию
                   </button>
                 ) : (
-                  <button className="btn secondary" onClick={stopSession} disabled={status === 'stopping'}>Остановить лекцию</button>
+                  <button className="btn secondary" onClick={stopSession} disabled={status === 'starting' || status === 'stopping'}>Остановить лекцию</button>
+                )}
+                {status === 'error' && activeLectureId !== null && (
+                  <button className="btn primary" onClick={retryVideo}>Подключить видео повторно</button>
                 )}
                 <button className="btn" onClick={exportCurrentSession}>Скачать .csv (сессия)</button>
                 <button className="btn" onClick={exportByLectures}>Скачать .csv (по лекциям)</button>

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useImperativeHandle, forwardRef } from 'react'
 import useCamera, { FULL_HD_HEIGHT, FULL_HD_WIDTH } from '../hooks/useCamera'
+import { CameraStream, isCameraStreamCancelled } from '../services/cameraStream'
+import type { CameraStreamState } from '../services/cameraStream'
 
 export type CameraSenderHandle = {
   prepare: () => Promise<void>
@@ -12,14 +14,13 @@ type Props = {
   getLectureId: () => number | null
   frameWsBase?: string
   initialFps?: number
-  /** Called when a JSON event is received from face-tracking (auto_publish, recognize_result, error) */
-  onServerEvent?: (event: any) => void
-  /** Called with normalized bbox-ы лиц от face-tracking (тип "faces"). Заменяет старый onAnnotatedFrame. */
+  onServerEvent?: (event: Record<string, unknown>) => void
   onLocalDetections?: (faces: [number, number, number, number][], frameWh: [number, number]) => void
-  /** Called when the internal MediaStream attaches/detaches — для отображения live-видео в родителе. */
   onStream?: (stream: MediaStream | null) => void
-  /** Whether the sender should be active (controlled mode) */
+  onStateChange?: (state: CameraStreamState) => void
   active?: boolean
+  showControls?: boolean
+  disabled?: boolean
 }
 
 const DEFAULT_WS = (import.meta.env.VITE_WS_BASE?.trim() || (() => {
@@ -34,264 +35,131 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
   onServerEvent,
   onLocalDetections,
   onStream,
+  onStateChange,
   active,
+  showControls = true,
+  disabled = false,
 }, ref) {
   const {
-    videoRef,
-    devices,
-    activeDeviceId,
-    setActiveDeviceId,
-    cameraMode,
-    openDevice,
-    closeStream,
-    ensurePermissionAndList,
-    error: cameraError,
-    getCurrentStream,
+    videoRef, devices, activeDeviceId, setActiveDeviceId, cameraMode,
+    openDevice, closeStream, ensurePermissionAndList,
+    error: cameraError, getCurrentStream,
   } = useCamera()
-
-  const wsRef = useRef<WebSocket | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const intervalRef = useRef<number | null>(null)
-  const [running, setRunning] = useState(false)
+  const mountedRef = useRef(false)
+  const [connectionState, setConnectionState] = useState<CameraStreamState>('idle')
   const [fps, setFps] = useState(initialFps)
-  const [, setStatus] = useState<'idle' | 'connected' | 'sending' | 'error'>('idle')
   const [localError, setLocalError] = useState('')
-  const bufferedThreshold = 4_000_000
+  const running = connectionState === 'sending'
+  const connecting = connectionState === 'connecting'
 
-  const onServerEventRef = useRef(onServerEvent)
-  onServerEventRef.current = onServerEvent
-  const onLocalDetectionsRef = useRef(onLocalDetections)
-  onLocalDetectionsRef.current = onLocalDetections
-  const onStreamRef = useRef(onStream)
-  onStreamRef.current = onStream
+  const prepareCamera = useCallback(async () => {
+    const deviceId = activeDeviceId || devices[0]?.deviceId
+    if (!deviceId) throw new Error('Нет доступных камер')
+    await openDevice(deviceId)
+    setLocalError('')
+  }, [activeDeviceId, devices, openDevice])
 
-  // Показываем родителю только поток, прошедший проверку Full HD.
-  useEffect(() => {
-    onStreamRef.current?.(cameraMode ? getCurrentStream() : null)
-    return () => onStreamRef.current?.(null)
-  }, [cameraMode, getCurrentStream])
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      stopSendingInternal()
-      closeSocket()
-      closeStream()
-    }
-  }, [])
-
-  // Restart sending when FPS changes
-  useEffect(() => {
-    if (running) {
-      stopSendingInternal()
-      startSending()
-    }
-  }, [fps])
-
-  // Controlled mode: react to `active` prop
-  useEffect(() => {
-    if (active === undefined) return
-    if (active && !running) {
-      startSending()
-    } else if (!active && running) {
-      stopSendingInternal()
-      closeSocket()
-    }
-  }, [active])
-
-  const buildWsUrl = (lectureId: number) => {
-    const q = `lecture_id=${encodeURIComponent(String(lectureId))}`
-    const base = frameWsBase.replace(/\/$/, '')
-    return `${base}/ws/stream?${q}`
-  }
-
-  const openSocketForLecture = (lectureId: number) => {
-    try {
-      closeSocket()
-      const url = buildWsUrl(lectureId)
-      const socket = new WebSocket(url)
-
-      socket.binaryType = 'arraybuffer'
-      socket.onopen = () => {
-        setStatus('connected')
-      }
-      socket.onclose = () => {
-        setStatus('idle')
-        wsRef.current = null
-      }
-      socket.onerror = () => {
-        setStatus('error')
-      }
-      socket.onmessage = (event) => {
-        // Бинарные сообщения от сервера больше не приходят (annotated JPEG отключён).
-        // Игнорируем на случай обратной совместимости со старой версией face-tracking.
-        if (event.data instanceof ArrayBuffer) return
-
-        if (typeof event.data === 'string') {
-          try {
-            const parsed = JSON.parse(event.data)
-            if (parsed?.type === 'faces' && Array.isArray(parsed.faces)) {
-              const fwh: [number, number] = Array.isArray(parsed.frame_wh) ? parsed.frame_wh : [0, 0]
-              onLocalDetectionsRef.current?.(parsed.faces as [number, number, number, number][], fwh)
-              return
-            }
-            onServerEventRef.current?.(parsed)
-          } catch {
-            // ignore
-          }
-        }
-      }
-
-      wsRef.current = socket
-      return socket
-    } catch {
-      wsRef.current = null
-      setStatus('error')
-      return null
-    }
-  }
-
-  const closeSocket = () => {
-    if (wsRef.current) {
-      try { wsRef.current.close() } catch {}
-      wsRef.current = null
-      setStatus('idle')
-    }
-  }
-
-  const sendBlob = async (blob: Blob) => {
-    const socket = wsRef.current
-    if (!socket || socket.readyState !== WebSocket.OPEN) return
-    if (socket.bufferedAmount > bufferedThreshold) return
-
-    try {
-      const arr = await blob.arrayBuffer()
-      socket.send(arr)
-    } catch {}
-  }
-
-  const ensureCanvas = (width: number, height: number) => {
-    if (!canvasRef.current) {
-      canvasRef.current = document.createElement('canvas')
-    }
-    if (canvasRef.current.width !== width) canvasRef.current.width = width
-    if (canvasRef.current.height !== height) canvasRef.current.height = height
-    return canvasRef.current
-  }
-
-  const sendFrameOnce = async () => {
+  const captureFrame = useCallback(async (socket: WebSocket, signal: AbortSignal) => {
     const video = videoRef.current
-    if (!video) return
-
+    if (!video || signal.aborted) return
     const stream = getCurrentStream()
     const track = stream?.getVideoTracks()[0]
-    const settings = track?.getSettings() as (MediaTrackSettings & { resizeMode?: string }) | undefined
+    const settings = track?.getSettings() as
+      (MediaTrackSettings & { resizeMode?: string }) | undefined
     if (
-      !stream || video.srcObject !== stream ||
+      !stream?.active || track?.readyState !== 'live' || video.srcObject !== stream ||
       settings?.width !== FULL_HD_WIDTH || settings.height !== FULL_HD_HEIGHT ||
       settings.resizeMode !== 'none' ||
       video.videoWidth !== FULL_HD_WIDTH || video.videoHeight !== FULL_HD_HEIGHT
-    ) {
-      stopSendingInternal()
-      closeSocket()
-      setLocalError('Поток камеры перестал выдавать Full HD 1920×1080 без масштабирования')
-      return
-    }
-    if (video.readyState !== HTMLMediaElement.HAVE_ENOUGH_DATA) return
+    ) throw new Error('Поток камеры перестал выдавать Full HD 1920×1080 без масштабирования')
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
+    if (socket.readyState !== WebSocket.OPEN || socket.bufferedAmount > 4_000_000) return
 
-    const canvas = ensureCanvas(video.videoWidth, video.videoHeight)
+    const canvas = canvasRef.current ?? document.createElement('canvas')
+    canvasRef.current = canvas
+    if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth
+    if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight
     const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    if (!ctx) throw new Error('Не удалось подготовить изображение камеры')
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.85))
+    if (!blob || signal.aborted) return
+    const bytes = await blob.arrayBuffer()
+    // This socket belongs to this capture. Never send an old JPEG to a new lecture.
+    if (!signal.aborted && socket.readyState === WebSocket.OPEN &&
+        socket.bufferedAmount + bytes.byteLength <= 4_000_000) socket.send(bytes)
+  }, [getCurrentStream, videoRef])
 
-    try {
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-      const blob = await new Promise<Blob | null>(resolve => {
-        canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.85)
-      })
-      if (blob) await sendBlob(blob)
-    } catch {}
+  const callbacksRef = useRef({
+    prepareCamera, captureFrame, getLectureId, frameWsBase,
+    onServerEvent, onLocalDetections, onStream, onStateChange,
+  })
+  callbacksRef.current = {
+    prepareCamera, captureFrame, getLectureId, frameWsBase,
+    onServerEvent, onLocalDetections, onStream, onStateChange,
   }
 
-  const prepareCamera = async () => {
-    const deviceId = activeDeviceId || devices[0]?.deviceId
-    if (!deviceId) {
-      const message = 'Нет доступных камер'
-      setLocalError(message)
-      throw new Error(message)
+  const [controller] = useState(() => new CameraStream({
+    prepare: () => callbacksRef.current.prepareCamera(),
+    getUrl: () => {
+      const lectureId = callbacksRef.current.getLectureId()
+      if (!lectureId) throw new Error('Не выбрана лекция')
+      const base = callbacksRef.current.frameWsBase.replace(/\/$/, '')
+      return `${base}/ws/stream?lecture_id=${encodeURIComponent(String(lectureId))}`
+    },
+    capture: (socket, signal) => callbacksRef.current.captureFrame(socket, signal),
+    onMessage: event => {
+      if (typeof event.data !== 'string') return
+      try {
+        const parsed = JSON.parse(event.data)
+        if (parsed?.type === 'faces' && Array.isArray(parsed.faces)) {
+          const frameWh: [number, number] = Array.isArray(parsed.frame_wh) ? parsed.frame_wh : [0, 0]
+          callbacksRef.current.onLocalDetections?.(parsed.faces, frameWh)
+        } else if (parsed && typeof parsed === 'object') {
+          callbacksRef.current.onServerEvent?.(parsed)
+        }
+      } catch { /* Ignore messages outside the camera protocol. */ }
+    },
+    onStateChange: state => {
+      if (!mountedRef.current) return
+      setConnectionState(state)
+      if (state === 'sending') callbacksRef.current.onStream?.(getCurrentStream())
+      callbacksRef.current.onStateChange?.(state)
+    },
+    onError: message => {
+      if (mountedRef.current) setLocalError(message)
+    },
+  }))
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      controller.stop()
+      closeStream()
     }
-    try {
-      await openDevice(deviceId)
-      setLocalError('')
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      setLocalError(message)
-      throw err
-    }
-  }
+  }, [controller, closeStream])
 
-  const startSending = useCallback(async () => {
-    if (running) return
+  useEffect(() => {
+    callbacksRef.current.onStream?.(cameraMode ? getCurrentStream() : null)
+    return () => callbacksRef.current.onStream?.(null)
+  }, [cameraMode, getCurrentStream])
 
-    const lectureId = getLectureId()
-    if (!lectureId) {
-      const message = 'Не выбрана лекция'
-      setLocalError(message)
-      setStatus('error')
-      throw new Error(message)
-    }
+  useEffect(() => { controller.setFps(fps) }, [controller, fps])
 
-    await prepareCamera()
+  useEffect(() => {
+    if (active === undefined) return
+    if (active) void controller.start().catch(() => { /* Controller reports connection errors. */ })
+    else controller.stop()
+  }, [active, controller])
 
-    const socket = openSocketForLecture(lectureId)
-    if (!socket) {
-      const message = 'Не удалось подключиться к серверу'
-      setLocalError(message)
-      throw new Error(message)
-    }
-
-    // Wait for WebSocket to connect
-    await new Promise<void>((resolve) => {
-      const timeout = setTimeout(resolve, 2000)
-      if (socket.readyState === WebSocket.OPEN) {
-        clearTimeout(timeout)
-        resolve()
-      } else {
-        socket.addEventListener('open', () => { clearTimeout(timeout); resolve() }, { once: true })
-      }
-    })
-    if (socket.readyState !== WebSocket.OPEN) {
-      closeSocket()
-      const message = 'Сервер не открыл видеопоток за 2 секунды'
-      setLocalError(message)
-      throw new Error(message)
-    }
-
-    const tick = Math.max(1, Math.round(1000 / Math.max(1, fps)))
-    intervalRef.current = window.setInterval(() => {
-      sendFrameOnce()
-    }, tick)
-
-    setRunning(true)
-    setStatus('sending')
-    setLocalError('')
-  }, [running, fps, activeDeviceId, devices])
-
-  const stopSendingInternal = () => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current)
-      intervalRef.current = null
-    }
-    setRunning(false)
-    setStatus('idle')
-  }
-
-  // Expose imperative handle for parent control
   useImperativeHandle(ref, () => ({
     prepare: prepareCamera,
-    start: startSending,
-    stop: () => { stopSendingInternal(); closeSocket() },
-    isRunning: () => running,
-  }), [prepareCamera, startSending, running])
+    start: () => { setLocalError(''); return controller.start() },
+    stop: () => controller.stop(),
+    isRunning: () => controller.isRunning(),
+  }), [controller, prepareCamera])
 
   const handleDeviceChange = (deviceId: string) => {
     if (deviceId) setActiveDeviceId(deviceId)
@@ -301,18 +169,12 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
 
   const handleStartClick = async () => {
     setLocalError('')
-    try {
-      await startSending()
-    } catch (err) {
-      setLocalError(`Ошибка запуска: ${err}`)
+    try { await controller.start() } catch (error) {
+      if (!isCameraStreamCancelled(error)) setLocalError(error instanceof Error ? error.message : String(error))
     }
   }
 
-  const handleStopClick = () => {
-    stopSendingInternal()
-    closeSocket()
-    setLocalError('')
-  }
+  const handleStopClick = () => { controller.stop(); setLocalError('') }
 
   const handleRequestPermission = async () => {
     try {
@@ -320,8 +182,8 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
       const deviceId = available.find(device => device.deviceId === activeDeviceId)?.deviceId || available[0]?.deviceId
       if (deviceId) await openDevice(deviceId)
       setLocalError('')
-    } catch (err) {
-      setLocalError(`Ошибка камеры: ${err}`)
+    } catch (error) {
+      setLocalError(`Ошибка камеры: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -335,7 +197,7 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
           <select
             value={activeDeviceId}
             onChange={(e) => handleDeviceChange(e.target.value)}
-            disabled={running}
+            disabled={running || connecting || disabled}
           >
             <option value="">-- по умолчанию --</option>
             {devices.map(device => (
@@ -354,24 +216,24 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
             max={15}
             value={fps}
             onChange={(e) => setFps(Number(e.target.value))}
-            disabled={running}
+            disabled={connecting || disabled}
           />
           <div style={{ fontSize: 12 }}>{fps} fps</div>
         </div>
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <button className="btn ghost" onClick={handleRequestPermission} disabled={running}>
+          <button className="btn ghost" onClick={handleRequestPermission} disabled={running || connecting || disabled}>
             Обновить камеры
           </button>
-          {!running ? (
-            <button className="btn" onClick={handleStartClick} disabled={!activeDeviceId}>
-              Начать отправку
+          {showControls && (!running ? (
+            <button className="btn" onClick={handleStartClick} disabled={!activeDeviceId || connecting || disabled}>
+              {connecting ? 'Подключение…' : 'Начать отправку'}
             </button>
           ) : (
             <button className="btn" onClick={handleStopClick}>
               Остановить
             </button>
-          )}
+          ))}
         </div>
       </div>
 
@@ -399,9 +261,9 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
       )}
 
       <div style={{ marginTop: 4, fontSize: 11, color: '#9ca3af' }}>
-        {running ? `Отправка ${fps} fps` : 'Ожидание'}
+        {running ? `Отправка ${fps} fps` : connecting ? 'Подключение…' : 'Ожидание'}
         {cameraMode ? ' • камера готова' : ''}
-        {wsRef.current?.readyState === WebSocket.OPEN ? ' • WS подключён' : ''}
+        {running ? ' • WS подключён' : ''}
       </div>
     </div>
   )
