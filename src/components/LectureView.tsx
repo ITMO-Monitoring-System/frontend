@@ -10,6 +10,8 @@ import TeacherAnalytics from './TeacherAnalytics'
 import CameraSender from './CameraSender'
 import type { CameraSenderHandle } from './CameraSender'
 import type { CameraStreamState } from '../services/cameraStream'
+import { addObservation, presenceLabel } from '../utils/lecturePresence'
+import type { ObservationHistory } from '../utils/lecturePresence'
 import {
   listDepartments,
   listGroupsByDepartment,
@@ -74,11 +76,13 @@ type AttendanceEntry = {
   last_name?: string
   patronymic?: string
   group?: string
-  present: boolean
-  presentSince: number | null
-  lastSeen: number
-  totalMs: number
-  status: 'на лекции' | 'вышел'
+  history: ObservationHistory
+}
+
+type AttendanceObservation = Omit<AttendanceEntry, 'history'> & {
+  observedAt: number
+  lectureId: number
+  runId: string | null
 }
 
 export default function LectureView() {
@@ -99,6 +103,11 @@ export default function LectureView() {
   const [status, setStatus] = useState<'idle'|'starting'|'running'|'stopping'|'error'|'stopped'>('idle')
   const [activeLectureId, setActiveLectureId] = useState<number | null>(null)
   const currentLectureId = useRef<number | null>(null)
+  const currentRunId = useRef<string | null>(null)
+  const lastFrameTimestamp = useRef<number | null>(null)
+  const [lastFrameReceivedAt, setLastFrameReceivedAt] = useState<number | null>(null)
+  const [now, setNow] = useState(Date.now)
+  const [eventsConnected, setEventsConnected] = useState(false)
   const sessionAttendanceRef = useRef<Record<number, Set<string>>>({})
   const usersByIdRef = useRef<Record<string, string>>({})
 
@@ -118,15 +127,15 @@ export default function LectureView() {
 
   const subscriptionsRef = useRef<Set<number>>(new Set())
   const reconnectTimerRef = useRef<number | null>(null)
-  const timeoutCheckerRef = useRef<number | null>(null)
 
   // rAF-throttle WS-сообщений посещаемости: при 10-50 событий/сек React делал бы
   // столько же re-render-ов таблицы. Аккумулируем в буферы, флашим раз в кадр (~16мс).
   const pendingDetectionsRef = useRef<Detection[] | null>(null)
-  const pendingUpsertsRef = useRef<any[]>([])
+  const pendingUpsertsRef = useRef<AttendanceObservation[]>([])
   const rafIdRef = useRef<number | null>(null)
 
   const closeEventsWs = useCallback(() => {
+    if (mountedRef.current) setEventsConnected(false)
     if (reconnectTimerRef.current !== null) {
       window.clearTimeout(reconnectTimerRef.current)
       reconnectTimerRef.current = null
@@ -147,7 +156,6 @@ export default function LectureView() {
     return () => {
       mountedRef.current = false
       closeEventsWs()
-      if (timeoutCheckerRef.current) window.clearInterval(timeoutCheckerRef.current)
       if (rafIdRef.current !== null) { window.cancelAnimationFrame(rafIdRef.current); rafIdRef.current = null }
     }
   }, [closeEventsWs])
@@ -234,35 +242,10 @@ export default function LectureView() {
   }, [selectedDepartmentIds, groupsByDepartment, failedDepartmentIds])
 
   useEffect(() => {
-    timeoutCheckerRef.current = window.setInterval(() => {
-      const now = Date.now()
-      setAttendance(prev => {
-        const copy = { ...prev }
-        Object.keys(copy).forEach(k => {
-          const entry = copy[k]
-          if (entry.present) {
-            const lastSeen = entry.lastSeen || now
-            const since = entry.presentSince ?? entry.lastSeen ?? now
-            if ((now - lastSeen) > 40000) {
-              const delta = Math.max(0, now - since)
-              copy[k] = {
-                ...entry,
-                present: false,
-                presentSince: null,
-                totalMs: (entry.totalMs ?? 0) + delta,
-                status: 'вышел'
-              }
-            }
-          }
-        })
-        return copy
-      })
-    }, 5000)
-    return () => {
-      if (timeoutCheckerRef.current) window.clearInterval(timeoutCheckerRef.current)
-      timeoutCheckerRef.current = null
-    }
-  }, [])
+    if (activeLectureId === null) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [activeLectureId])
 
   const loadTeacherLectures = async () => {
     const teacherIsu = (user && (user.isu ?? user.id ?? '')) as string
@@ -344,221 +327,89 @@ export default function LectureView() {
     }
   }
 
-  const handleDetectedArray = (newDetections: Detection[]) => {
-    const now = Date.now()
-    setAttendance(prev => {
-      const copy = { ...prev }
-      const seen = new Set<string>()
-      newDetections.forEach(d => {
-        const key = d.user?.isu ? String(d.user.isu) : d.id ? String(d.id) : `${d.name ?? 'unknown'}_${Math.round((d.bbox?.[0] ?? 0)*1000)}_${Math.round((d.bbox?.[1] ?? 0)*1000)}`
-        seen.add(key)
-      })
-      Object.keys(copy).forEach(k => {
-        if (!seen.has(k)) {
-          const entry = copy[k]
-          if (entry.present) {
-            const since = entry.presentSince ?? entry.lastSeen ?? now
-            const delta = Math.max(0, now - since)
-            copy[k] = {
-              ...entry,
-              present: false,
-              presentSince: null,
-              totalMs: (entry.totalMs ?? 0) + delta,
-              status: 'вышел'
-            }
-          }
-        }
-      })
-      newDetections.forEach(d => {
-        const groupVal = d.group ?? undefined
-        if (d.user && d.user.isu) {
-          const isu = String(d.user.isu)
-          const existing = copy[isu]
-          const fullName = `${d.user.last_name ?? ''} ${d.user.name ?? ''}`.trim()
-          if (!existing) {
-            copy[isu] = {
-              isu,
-              name: fullName || d.user.name || d.user.last_name,
-              last_name: d.user.last_name,
-              patronymic: d.user.patronymic,
-              group: groupVal,
-              present: true,
-              presentSince: now,
-              lastSeen: now,
-              totalMs: 0,
-              status: 'на лекции'
-            }
-          } else {
-            if (!existing.present) {
-              copy[isu] = {
-                ...existing,
-                present: true,
-                presentSince: now,
-                lastSeen: now,
-                name: fullName || existing.name,
-                last_name: d.user.last_name ?? existing.last_name,
-                patronymic: d.user.patronymic ?? existing.patronymic,
-                group: groupVal ?? existing.group,
-                status: 'на лекции'
-              }
-            } else {
-              copy[isu] = {
-                ...existing,
-                lastSeen: now,
-                name: fullName || existing.name,
-                last_name: d.user.last_name ?? existing.last_name,
-                patronymic: d.user.patronymic ?? existing.patronymic,
-                group: groupVal ?? existing.group
-              }
-            }
-          }
-          usersByIdRef.current[isu] = copy[isu].name ?? isu
-        } else {
-          const key = d.id ? String(d.id) : `${d.name ?? 'unknown'}_${Math.round((d.bbox?.[0] ?? 0)*1000)}_${Math.round((d.bbox?.[1] ?? 0)*1000)}`
-          const existing = copy[key]
-          if (!existing) {
-            copy[key] = {
-              isu: key,
-              name: d.name,
-              last_name: undefined,
-              patronymic: undefined,
-              group: groupVal,
-              present: true,
-              presentSince: now,
-              lastSeen: now,
-              totalMs: 0,
-              status: 'на лекции'
-            }
-          } else {
-            if (!existing.present) copy[key] = { ...existing, present: true, presentSince: now, lastSeen: now, name: d.name ?? existing.name, group: groupVal ?? existing.group, status: 'на лекции' }
-            else copy[key] = { ...existing, lastSeen: now, name: d.name ?? existing.name, group: groupVal ?? existing.group }
-          }
-        }
-      })
-      return copy
-    })
-    setDetections(newDetections)
-  }
-
-  const upsertUser = (userObj: any) => {
-    const now = Date.now()
-    if (!userObj) return
-    const isu = String(userObj.isu ?? userObj.id ?? '')
-    if (!isu) return
-    setAttendance(prev => {
-      const copy = { ...prev }
-      const existing = copy[isu]
-      const fullName = `${userObj.last_name ?? ''} ${userObj.name ?? ''}`.trim()
-      if (!existing) {
-        copy[isu] = {
-          isu,
-          name: fullName || userObj.name || userObj.last_name,
-          last_name: userObj.last_name,
-          patronymic: userObj.patronymic,
-          group: userObj.group,
-          present: true,
-          presentSince: now,
-          lastSeen: now,
-          totalMs: 0,
-          status: 'на лекции'
-        }
-      } else {
-        if (!existing.present) {
-          copy[isu] = {
-            ...existing,
-            present: true,
-            presentSince: now,
-            lastSeen: now,
-            name: fullName || existing.name,
-            last_name: userObj.last_name ?? existing.last_name,
-            patronymic: userObj.patronymic ?? existing.patronymic,
-            group: userObj.group ?? existing.group,
-            status: 'на лекции'
-          }
-        } else {
-          copy[isu] = {
-            ...existing,
-            lastSeen: now,
-            name: fullName || existing.name,
-            last_name: userObj.last_name ?? existing.last_name,
-            patronymic: userObj.patronymic ?? existing.patronymic,
-            group: userObj.group ?? existing.group
-          }
-        }
-      }
-      usersByIdRef.current[isu] = copy[isu].name ?? isu
-      return copy
-    })
-  }
-
   const flushPending = () => {
     rafIdRef.current = null
-    const det = pendingDetectionsRef.current
+    const detections = pendingDetectionsRef.current
     pendingDetectionsRef.current = null
-    const ups = pendingUpsertsRef.current
+    if (detections && currentRunId.current === null && currentLectureId.current !== null) {
+      setDetections(detections)
+    }
+
+    const observations = pendingUpsertsRef.current.filter(
+      observation => observation.lectureId === currentLectureId.current && observation.runId === currentRunId.current,
+    )
     pendingUpsertsRef.current = []
-    if (det) handleDetectedArray(det)
-    // React 18 батчит несколько setState в одном sync-callback'е rAF в 1 re-render
-    ups.forEach(u => upsertUser(u))
+    if (observations.length === 0) return
+    for (const observation of observations) {
+      if (observation.name) usersByIdRef.current[observation.isu] = observation.name
+    }
+    setAttendance(previous => {
+      const entries = { ...previous }
+      for (const { isu, name, last_name, patronymic, group, observedAt } of observations) {
+        const entry = entries[isu]
+        entries[isu] = {
+          isu,
+          name: name || entry?.name,
+          last_name: last_name ?? entry?.last_name,
+          patronymic: patronymic ?? entry?.patronymic,
+          group: group ?? entry?.group,
+          history: addObservation(entry?.history ?? { times: [], totalMs: 0 }, observedAt),
+        }
+      }
+      return entries
+    })
   }
 
   const scheduleFlush = () => {
-    if (rafIdRef.current !== null) return
-    rafIdRef.current = window.requestAnimationFrame(flushPending)
+    if (rafIdRef.current === null) rafIdRef.current = window.requestAnimationFrame(flushPending)
   }
 
-  const queueDetections = (arr: Detection[]) => {
-    // detections — это снапшот текущих лиц в кадре. Последний batch перезатирает предыдущие.
-    pendingDetectionsRef.current = arr
+  const queueObservation = (lectureId: number, runId: string | null, observedAt: number, detection: Detection) => {
+    const student = detection.user
+    const isu = String(student?.isu ?? detection.id ?? '')
+    if (!isu) return
+    const fullName = [student?.last_name, student?.name].filter(Boolean).join(' ')
+    pendingUpsertsRef.current.push({
+      isu, name: fullName || detection.name, last_name: student?.last_name,
+      patronymic: student?.patronymic, group: detection.group ?? undefined,
+      lectureId, runId, observedAt,
+    })
     scheduleFlush()
   }
 
-  const queueUpsert = (user: any) => {
-    pendingUpsertsRef.current.push(user)
-    scheduleFlush()
-  }
-
-  const handleEventsRaw = async (raw: any) => {
+  const handleEventsRaw = async (raw: unknown, socket: WebSocket) => {
     try {
-      if (typeof raw === 'string') {
-        const parsed = JSON.parse(raw)
-        if (!parsed) return
-        if (Array.isArray(parsed)) {
-          queueDetections(parsed as Detection[])
-          return
-        }
-        if (parsed.detections && Array.isArray(parsed.detections)) {
-          queueDetections(parsed.detections as Detection[])
-          return
-        }
-        if (parsed.user) {
-          const merged = { ...(parsed.user || {}), group: parsed.group ?? parsed.user.group ?? parsed.group }
-          queueUpsert(merged)
-          return
-        }
-        if (parsed.type === 'detection' && parsed.user) {
-          const merged = { ...(parsed.user || {}), group: parsed.group ?? parsed.user.group ?? parsed.group }
-          queueUpsert(merged)
-          return
-        }
-        if (parsed.type === 'detections' && Array.isArray(parsed.detections)) {
-          queueDetections(parsed.detections as Detection[])
-          return
-        }
-        return
-      } else if (raw instanceof ArrayBuffer) {
-        const text = new TextDecoder().decode(raw)
-        await handleEventsRaw(text)
-        return
-      } else if (raw instanceof Blob) {
-        const text = await raw.text()
-        await handleEventsRaw(text)
-        return
-      } else {
+      let text: string
+      if (typeof raw === 'string') text = raw
+      else if (raw instanceof ArrayBuffer) text = new TextDecoder().decode(raw)
+      else if (raw instanceof Blob) text = await raw.text()
+      else return
+      if (eventsSocketRef.current !== socket) return
+      const lectureId = currentLectureId.current
+      if (lectureId === null) return
+      const runId = currentRunId.current
+      const parsed = JSON.parse(text)
+      if (!parsed) return
+      if (parsed.lecture_id != null && Number(parsed.lecture_id) !== lectureId) return
+      if ((parsed.run_id ?? null) !== runId) return
+      if (parsed.user) {
+        const observedAt = Date.parse(parsed.observed_at)
+        if (runId !== null && !Number.isFinite(observedAt)) return
+        queueObservation(lectureId, runId, Number.isFinite(observedAt) ? observedAt : Date.now(), {
+          user: parsed.user,
+          group: parsed.group ?? parsed.user.group,
+        })
         return
       }
+      const batch = Array.isArray(parsed) ? parsed : parsed.detections
+      if (runId === null && Array.isArray(batch)) {
+        pendingDetectionsRef.current = batch
+        const observedAt = Date.now()
+        for (const detection of batch) queueObservation(lectureId, null, observedAt, detection)
+        scheduleFlush()
+      }
     } catch {
-      return
+      // Ignore messages outside the events protocol.
     }
   }
 
@@ -575,7 +426,13 @@ export default function LectureView() {
   // Локальные bbox-ы лиц от face-tracking — рисуются canvas-overlay поверх <video>.
   const handleLocalDetections = useCallback((
     faces: [number, number, number, number][],
+    _frameWh: [number, number],
+    timestamp: number | null,
   ) => {
+    if (timestamp !== null && timestamp !== lastFrameTimestamp.current) {
+      lastFrameTimestamp.current = timestamp
+      setLastFrameReceivedAt(Date.now())
+    }
     setLocalFaces(faces)
   }, [])
 
@@ -593,6 +450,10 @@ export default function LectureView() {
   }, [])
 
   const handleCameraState = useCallback((state: CameraStreamState) => {
+    if (state !== 'sending') {
+      lastFrameTimestamp.current = null
+      if (mountedRef.current) setLastFrameReceivedAt(null)
+    }
     if (sessionActionRef.current || currentLectureId.current === null) return
     if (state === 'error' || state === 'idle') {
       setStatus('error')
@@ -609,18 +470,20 @@ export default function LectureView() {
       eventsSocketRef.current = socket
       socket.onopen = () => {
         if (eventsSocketRef.current !== socket) return
+        setEventsConnected(true)
         subscriptionsRef.current.forEach(id => {
           socket.send(JSON.stringify({ action: 'subscribe', lecture_id: id.toString() }))
         })
       }
       socket.onmessage = (ev: MessageEvent) => {
         if (eventsSocketRef.current !== socket) return
-        handleEventsRaw(ev.data)
+        void handleEventsRaw(ev.data, socket)
       }
       socket.onerror = () => {}
       socket.onclose = (ev) => {
         if (eventsSocketRef.current !== socket) return
         eventsSocketRef.current = null
+        setEventsConnected(false)
         if (ev.code !== 1000 && subscriptionsRef.current.size > 0 && mountedRef.current) {
           if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current)
           reconnectTimerRef.current = window.setTimeout(() => {
@@ -654,6 +517,7 @@ export default function LectureView() {
   }
 
   const getLectureId = useCallback(() => currentLectureId.current, [])
+  const getRunId = useCallback(() => currentRunId.current, [])
 
   const startSession = async () => {
     if (sessionActionRef.current || currentLectureId.current !== null) return
@@ -677,6 +541,12 @@ export default function LectureView() {
       const finalId = Number.isFinite(returnedNum) ? returnedNum : lectureId
       startedLectureId = finalId
       currentLectureId.current = finalId
+      currentRunId.current = res?.data?.run_id ?? null
+      pendingUpsertsRef.current = []
+      pendingDetectionsRef.current = null
+      lastFrameTimestamp.current = null
+      setLastFrameReceivedAt(null)
+      setNow(Date.now())
       setActiveLectureId(finalId)
 
       // Connect events WebSocket (backend → frontend for recognition results)
@@ -733,14 +603,13 @@ export default function LectureView() {
     const lid = currentLectureId.current
     setStatus('stopping')
     try {
-      const now = Date.now()
-      const snapshot = Object.entries(attendance).map(([id, r]) => {
-        const runningDelta = r.present && r.presentSince ? Math.max(0, now - r.presentSince) : 0
-        const total = (r.totalMs ?? 0) + runningDelta
-        return { id, totalMs: total }
-      })
-      const presentIds = snapshot.filter(s => (s.totalMs ?? 0) > 0).map(s => s.id)
-      if (lid !== null) sessionAttendanceRef.current[lid] = new Set(presentIds)
+      const presentIds = new Set(Object.keys(attendance))
+      for (const observation of pendingUpsertsRef.current) {
+        if (observation.lectureId === lid && observation.runId === currentRunId.current) {
+          presentIds.add(observation.isu)
+          if (observation.name) usersByIdRef.current[observation.isu] = observation.name
+        }
+      }
 
       // Stop CameraSender (closes its WebSocket)
       cameraSenderRef.current?.stop()
@@ -748,8 +617,15 @@ export default function LectureView() {
       if (lid !== null) sendUnsubscribe(lid)
       closeEventsWs()
       if (lid !== null) {
-        await endLectureFrame(lid, { if_unused: false, if_empty: false })
+        await endLectureFrame(lid, { if_unused: false, if_empty: false, run_id: currentRunId.current })
+        const lectureAttendance = sessionAttendanceRef.current[lid] ?? new Set<string>()
+        for (const isu of presentIds) lectureAttendance.add(isu)
+        sessionAttendanceRef.current[lid] = lectureAttendance
+        pendingUpsertsRef.current = []
+        pendingDetectionsRef.current = null
         currentLectureId.current = null
+        currentRunId.current = null
+        setAttendance({})
         setActiveLectureId(null)
       }
       setStatus('stopped')
@@ -761,7 +637,8 @@ export default function LectureView() {
       sessionActionRef.current = null
       setDetections([])
       setLocalFaces([])
-      setAttendance({})
+      lastFrameTimestamp.current = null
+      setLastFrameReceivedAt(null)
       if (videoRef.current) videoRef.current.srcObject = null
       setHasFrame(false)
     }
@@ -782,12 +659,11 @@ export default function LectureView() {
   }
 
   const exportCurrentSession = () => {
-    const now = Date.now()
-    const arr = Object.values(attendance).map(a => {
-      const runningDelta = a.present && a.presentSince ? Math.max(0, now - a.presentSince) : 0
-      const total = (a.totalMs ?? 0) + runningDelta
-      return { id: a.isu, name: a.name ?? a.isu, totalMs: total, total: fmtMs(total) }
-    })
+    const arr = Object.values(attendance).map(({ isu, name, history }) => ({
+      id: isu, name: name ?? isu,
+      totalMs: history.times.length === 1 ? null : history.totalMs,
+      total: history.times.length === 1 ? 'Недостаточно наблюдений' : fmtMs(history.totalMs),
+    }))
     exportAttendanceToXlsx(arr, 'lecture_session.csv')
   }
 
@@ -836,6 +712,7 @@ export default function LectureView() {
               <CameraSender
                 ref={cameraSenderRef}
                 getLectureId={getLectureId}
+                getRunId={getRunId}
                 frameWsBase={FRAME_WS_BASE}
                 onLocalDetections={handleLocalDetections}
                 onServerEvent={handleServerEvent}
@@ -886,16 +763,8 @@ export default function LectureView() {
 
         <aside className="detected-panel">
           <div className="detected-header">
-            <h3>Обнаруженные сейчас <span className="badge">{Object.keys(attendance).length}</span></h3>
+            <h3>Распознанные за запуск <span className="badge">{Object.keys(attendance).length}</span></h3>
             <button className="btn ghost" onClick={() => { setAttendance({}); setDetections([]) }}>Очистить</button>
-          </div>
-
-          <div
-            className="muted"
-            style={{ fontSize: 12, padding: '0 8px 8px', lineHeight: 1.4 }}
-            title="Live-время считается от первой детекции до выхода из кадра (окно закрывается после 40 секунд без детекции). В Аналитике используется параметр «Допустимый разрыв» — он может дать другое число."
-          >
-            Живое время в кадре. В Аналитике считается с учётом параметра «Допустимый разрыв» — числа могут отличаться.
           </div>
 
           <div className="detected-list">
@@ -903,9 +772,8 @@ export default function LectureView() {
               <div className="muted">Пока никого не обнаружено</div>
             ) : (
               Object.values(attendance).map(a => {
-                const now = Date.now()
-                const runningDelta = a.present && a.presentSince ? Math.max(0, now - a.presentSince) : 0
-                const total = (a.totalMs ?? 0) + runningDelta
+                const lastSeen = a.history.times[a.history.times.length - 1]
+                const label = presenceLabel(lastSeen, lastFrameReceivedAt, eventsConnected, now)
                 return (
                   <div className="detected-item" key={a.isu}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
@@ -916,9 +784,9 @@ export default function LectureView() {
                         <div style={{ color: '#374151', marginTop: 6 }}>Группа: {a.group ?? '—'}</div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontWeight: 700 }}>{fmtMs(total)}</div>
-                        <div style={{ color: '#6b7280', fontSize: 12 }}>{a.status}</div>
-                        <div style={{ color: '#9ca3af', fontSize: 12, marginTop: 6 }}>Последнее появление: {new Date(a.lastSeen).toLocaleTimeString()}</div>
+                        <div style={{ fontWeight: 700 }}>{a.history.times.length === 1 ? 'Недостаточно наблюдений' : fmtMs(a.history.totalMs)}</div>
+                        <div style={{ color: '#6b7280', fontSize: 12 }}>{label}</div>
+                        <div style={{ color: '#9ca3af', fontSize: 12, marginTop: 6 }}>Последнее появление: {new Date(lastSeen).toLocaleTimeString()}</div>
                       </div>
                     </div>
                   </div>

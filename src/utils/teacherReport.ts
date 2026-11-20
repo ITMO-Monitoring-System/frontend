@@ -16,11 +16,12 @@ export type AttendanceConfig = {
   partialThreshold: number;
   gapSeconds: number;
 };
-export type AttendanceStatus = 'present' | 'partial' | 'low' | 'absent';
+export type AttendanceStatus = 'present' | 'partial' | 'low' | 'observed' | 'absent';
 export const statusLabels: Record<AttendanceStatus, string> = {
   present: 'Присутствовал',
   partial: 'Частично',
   low: 'Ниже порога',
+  observed: 'Замечен, длительность неизвестна',
   absent: 'Нет отметок',
 };
 export const studentName = (row: AttendanceRow) =>
@@ -29,6 +30,7 @@ export const attendancePercent = (row: AttendanceRow, config: AttendanceConfig) 
   Math.min(100, (Math.max(0, row.present_seconds) / (config.durationMinutes * 60)) * 100);
 export function attendanceStatus(row: AttendanceRow, config: AttendanceConfig): AttendanceStatus {
   if (!row.detection_count) return 'absent';
+  if (row.present_seconds === 0) return 'observed';
   const percent = attendancePercent(row, config);
   if (percent >= config.presentThreshold) return 'present';
   if (percent >= config.partialThreshold) return 'partial';

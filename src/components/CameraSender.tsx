@@ -12,10 +12,11 @@ export type CameraSenderHandle = {
 
 type Props = {
   getLectureId: () => number | null
+  getRunId?: () => string | null
   frameWsBase?: string
   initialFps?: number
   onServerEvent?: (event: Record<string, unknown>) => void
-  onLocalDetections?: (faces: [number, number, number, number][], frameWh: [number, number]) => void
+  onLocalDetections?: (faces: [number, number, number, number][], frameWh: [number, number], timestamp: number | null) => void
   onStream?: (stream: MediaStream | null) => void
   onStateChange?: (state: CameraStreamState) => void
   active?: boolean
@@ -30,6 +31,7 @@ const DEFAULT_WS = (import.meta.env.VITE_WS_BASE?.trim() || (() => {
 
 const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender({
   getLectureId,
+  getRunId,
   frameWsBase = DEFAULT_WS,
   initialFps = 5,
   onServerEvent,
@@ -92,11 +94,11 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
   }, [getCurrentStream, videoRef])
 
   const callbacksRef = useRef({
-    prepareCamera, captureFrame, getLectureId, frameWsBase,
+    prepareCamera, captureFrame, getLectureId, getRunId, frameWsBase,
     onServerEvent, onLocalDetections, onStream, onStateChange,
   })
   callbacksRef.current = {
-    prepareCamera, captureFrame, getLectureId, frameWsBase,
+    prepareCamera, captureFrame, getLectureId, getRunId, frameWsBase,
     onServerEvent, onLocalDetections, onStream, onStateChange,
   }
 
@@ -106,7 +108,10 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
       const lectureId = callbacksRef.current.getLectureId()
       if (!lectureId) throw new Error('Не выбрана лекция')
       const base = callbacksRef.current.frameWsBase.replace(/\/$/, '')
-      return `${base}/ws/stream?lecture_id=${encodeURIComponent(String(lectureId))}`
+      const params = new URLSearchParams({ lecture_id: String(lectureId) })
+      const runId = callbacksRef.current.getRunId?.()
+      if (runId) params.set('run_id', runId)
+      return `${base}/ws/stream?${params}`
     },
     capture: (socket, signal) => callbacksRef.current.captureFrame(socket, signal),
     onMessage: event => {
@@ -115,7 +120,7 @@ const CameraSender = forwardRef<CameraSenderHandle, Props>(function CameraSender
         const parsed = JSON.parse(event.data)
         if (parsed?.type === 'faces' && Array.isArray(parsed.faces)) {
           const frameWh: [number, number] = Array.isArray(parsed.frame_wh) ? parsed.frame_wh : [0, 0]
-          callbacksRef.current.onLocalDetections?.(parsed.faces, frameWh)
+          callbacksRef.current.onLocalDetections?.(parsed.faces, frameWh, Number.isFinite(parsed.ts) ? parsed.ts : null)
         } else if (parsed && typeof parsed === 'object') {
           callbacksRef.current.onServerEvent?.(parsed)
         }

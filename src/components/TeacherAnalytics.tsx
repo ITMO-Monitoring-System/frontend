@@ -239,7 +239,7 @@ export default function TeacherAnalytics() {
           'ФИО',
           'Присутствие (сек)',
           'Присутствие (%)',
-          'Отметок',
+          'Наблюдений',
           'Статус',
         ],
         ...scoped.items.map((r) => [
@@ -248,8 +248,8 @@ export default function TeacherAnalytics() {
           r.group_code,
           r.isu,
           studentName(r),
-          r.present_seconds,
-          Number(attendancePercent(r, config).toFixed(1)),
+          attendanceStatus(r, config) === 'observed' ? '' : r.present_seconds,
+          attendanceStatus(r, config) === 'observed' ? '' : Number(attendancePercent(r, config).toFixed(1)),
           r.detection_count,
           statusLabels[attendanceStatus(r, config)],
         ]),
@@ -666,9 +666,10 @@ export default function TeacherAnalytics() {
                           </td>
                           <td>{row.group_code}</td>
                           <td>
-                            {Math.floor(row.present_seconds / 60)} мин ·{' '}
-                            {attendancePercent(row, config).toFixed(1)}%
-                            <small>{row.detection_count} отметок</small>
+                            {attendanceStatus(row, config) === 'observed'
+                              ? '—'
+                              : `${Math.floor(row.present_seconds / 60)} мин · ${attendancePercent(row, config).toFixed(1)}%`}
+                            <small>Наблюдений: {row.detection_count}</small>
                           </td>
                           <td>
                             <span className={`report-status ${attendanceStatus(row, config)}`}>

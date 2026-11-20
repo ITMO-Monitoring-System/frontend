@@ -774,7 +774,7 @@ function StudentVisitsAnalytics() {
                       <tr key={`${it.lecture_id}_${it.date}`}>
                         <td>{new Date(it.date).toLocaleString()}</td>
                         <td>{it.lecture_id}</td>
-                        <td>{formatSeconds(it.present_seconds)}</td>
+                        <td>{it.present_seconds ? formatSeconds(it.present_seconds) : 'Недостаточно наблюдений'}</td>
                         <td>{it.teacher_isu ?? '-'}</td>
                       </tr>
                     ))
