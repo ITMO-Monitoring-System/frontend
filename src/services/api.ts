@@ -136,6 +136,9 @@ export const createLecture = (payload: {
   teacher_id: string
 }) => api.post<Lecture>('/api/lectures', payload)
 
+export const updateLecture = (id: number, payload: Parameters<typeof createLecture>[0]) =>
+  api.put<Lecture>(`/api/lectures/${id}`, payload)
+
 export const getLectureById = (id: number) =>
   api.get<Lecture>(`/api/lectures/${encodeURIComponent(String(id))}`)
 
