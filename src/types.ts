@@ -43,6 +43,7 @@ export type Group = {
   code: string
   department_id?: number
   name?: string
+  student_count: number
 }
 
 export type Lecture = {

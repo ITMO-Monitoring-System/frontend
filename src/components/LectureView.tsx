@@ -14,6 +14,7 @@ import type { CameraSenderHandle } from './CameraSender'
 import type { CameraStreamState } from '../services/cameraStream'
 import { addObservation, presenceLabel } from '../utils/lecturePresence'
 import type { ObservationHistory } from '../utils/lecturePresence'
+import { summarizeLectureGroups, toggleLectureGroup } from '../utils/lectureGroupSelection'
 import {
   listDepartments,
   listGroupsByDepartment,
@@ -140,12 +141,16 @@ export default function LectureView() {
   const teacherIsu = String(user?.isu ?? user?.id ?? '')
   const [newLectureDate, setNewLectureDate] = useState('')
   const [newSubjectId, setNewSubjectId] = useState('')
-  const [newGroupIds, setNewGroupIds] = useState<string[]>([])
+  const [groupOverrides, setGroupOverrides] = useState<Partial<Record<number, string[]>>>({})
   const [availableSubjects, setAvailableSubjects] = useState<Subject[]>([])
   const [availableDepartments, setAvailableDepartments] = useState<Department[]>([])
   const [selectedDepartmentIds, setSelectedDepartmentIds] = useState<number[]>([])
-  const [groupsByDepartment, setGroupsByDepartment] = useState<Record<number, Group[]>>({})
+  const [groupsByDepartment, setGroupsByDepartment] = useState<Partial<Record<number, Group[]>>>({})
   const [failedDepartmentIds, setFailedDepartmentIds] = useState<number[]>([])
+  const { groupIds: newGroupIds, studentCount, complete: groupsReady } = summarizeLectureGroups(
+    selectedDepartmentIds, groupsByDepartment, groupOverrides,
+  )
+  const selectedGroupIds = new Set(newGroupIds)
   const [showAnalyticsModal, setShowAnalyticsModal] = useState(false)
 
   const subscriptionsRef = useRef<Set<number>>(new Set())
@@ -229,6 +234,7 @@ export default function LectureView() {
   }, [detections, localFaces, hasFrame])
 
   useEffect(() => {
+    if (!showCreateModal) return
     const missing = selectedDepartmentIds.filter(
       id => groupsByDepartment[id] === undefined && !failedDepartmentIds.includes(id)
     )
@@ -257,7 +263,7 @@ export default function LectureView() {
     })
 
     return () => { cancelled = true }
-  }, [selectedDepartmentIds, groupsByDepartment, failedDepartmentIds])
+  }, [showCreateModal, selectedDepartmentIds, groupsByDepartment, failedDepartmentIds])
 
   useEffect(() => {
     if (activeLectureId === null) return
@@ -342,7 +348,7 @@ export default function LectureView() {
     setGroupsByDepartment({})
     setFailedDepartmentIds([])
     setSelectedDepartmentIds(lecture?.department_ids ?? [])
-    setNewGroupIds(lecture?.group_ids ?? [])
+    setGroupOverrides(lecture ? Object.fromEntries(lecture.department_ids.map(id => [id, lecture.group_ids])) : {})
     setNewSubjectId(lecture ? String(lecture.subject_id) : '')
     const date = lecture && new Date(lecture.date)
     setNewLectureDate(date ? new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : '')
@@ -360,16 +366,15 @@ export default function LectureView() {
   }
 
   const onDepartmentToggle = (id: number) => {
-    const next = selectedDepartmentIds.includes(id)
-      ? selectedDepartmentIds.filter(selectedId => selectedId !== id)
-      : [...selectedDepartmentIds, id]
-    const removed = new Set((groupsByDepartment[id] || []).map(group => group.code))
-    setSelectedDepartmentIds(next)
+    setSelectedDepartmentIds(previous => previous.includes(id)
+      ? previous.filter(selectedId => selectedId !== id)
+      : [...previous, id])
+    setGroupOverrides(previous => ({ ...previous, [id]: undefined }))
     setFailedDepartmentIds(previous => previous.filter(failedId => failedId !== id))
-    if (!next.includes(id)) setNewGroupIds(previous => previous.filter(code => !removed.has(code)))
   }
 
   const saveLecture = async () => {
+    if (!groupsReady) return
     const teacherIsu = (user && (user.isu ?? user.id ?? '')) as string
     if (!teacherIsu) {
       alert('ISU преподавателя неизвестен')
@@ -401,7 +406,6 @@ export default function LectureView() {
       setShowCreateModal(false)
       setNewLectureDate('')
       setNewSubjectId('')
-      setNewGroupIds([])
       loadTeacherLectures()
     } catch (err: any) {
       setFormError(err.response?.data?.error || err.message)
@@ -912,7 +916,7 @@ export default function LectureView() {
                         <input
                           type="checkbox"
                           checked={selectedDepartmentIds.includes(d.id)}
-                          disabled={selectedDepartmentIds.includes(d.id) && !groupsByDepartment[d.id]}
+                          disabled={saving}
                           onChange={() => onDepartmentToggle(d.id)}
                         />
                         <span>{d.code} – {d.name}</span>
@@ -925,33 +929,43 @@ export default function LectureView() {
                   <label>Группы · выбрано: {newGroupIds.length}</label>
                   <div className="selection-list" role="group" aria-label="Группы">
                     {selectedDepartmentIds.length === 0 && <span className="selection-empty">Выберите направления</span>}
-                    {selectedDepartmentIds.map(departmentId => (
-                      <div key={departmentId}>
-                        <div className="selection-heading">
-                          {availableDepartments.find(department => department.id === departmentId)?.code}
+                    {selectedDepartmentIds.map(departmentId => {
+                      const groups = groupsByDepartment[departmentId]
+                      return (
+                        <div key={departmentId}>
+                          <div className="selection-heading">
+                            {availableDepartments.find(department => department.id === departmentId)?.code}
+                          </div>
+                          {failedDepartmentIds.includes(departmentId) ? (
+                            <button className="selection-retry" type="button" onClick={() => setFailedDepartmentIds(previous => previous.filter(id => id !== departmentId))}>
+                              Не удалось загрузить группы. Повторить
+                            </button>
+                          ) : groups === undefined ? (
+                            <span className="selection-empty">Загрузка групп…</span>
+                          ) : groups.length === 0 ? (
+                            <span className="selection-empty">Групп нет</span>
+                          ) : groups.map(group => (
+                            <label className="selection-option" key={group.code}>
+                              <input
+                                type="checkbox"
+                                checked={selectedGroupIds.has(group.code)}
+                                disabled={saving}
+                                onChange={() => setGroupOverrides(previous => ({
+                                  ...previous,
+                                  [departmentId]: toggleLectureGroup(groups, previous[departmentId], group.code),
+                                }))}
+                              />
+                              <span>{group.name || group.code}</span>
+                            </label>
+                          ))}
                         </div>
-                        {failedDepartmentIds.includes(departmentId) ? (
-                          <button className="selection-retry" type="button" onClick={() => setFailedDepartmentIds(previous => previous.filter(id => id !== departmentId))}>
-                            Не удалось загрузить группы. Повторить
-                          </button>
-                        ) : groupsByDepartment[departmentId] === undefined ? (
-                          <span className="selection-empty">Загрузка групп…</span>
-                        ) : groupsByDepartment[departmentId].length === 0 ? (
-                          <span className="selection-empty">Групп нет</span>
-                        ) : groupsByDepartment[departmentId].map(group => (
-                          <label className="selection-option" key={group.code}>
-                            <input
-                              type="checkbox"
-                              checked={newGroupIds.includes(group.code)}
-                              onChange={() => setNewGroupIds(previous => previous.includes(group.code)
-                                ? previous.filter(code => code !== group.code)
-                                : [...previous, group.code])}
-                            />
-                            <span>{group.name || group.code}</span>
-                          </label>
-                        ))}
-                      </div>
-                    ))}
+                      )
+                    })}
+                  </div>
+                  <div role="status">
+                    Студентов: {failedDepartmentIds.length > 0 || studentCount === null
+                      ? 'не удалось подсчитать'
+                      : groupsReady ? studentCount : 'подсчёт…'}
                   </div>
                 </div>
 
@@ -974,7 +988,7 @@ export default function LectureView() {
                 <button className="btn" disabled={saving} onClick={() => setShowCreateModal(false)}>Отмена</button>
                 <button
                   className="btn primary"
-                  disabled={saving || !availableSubjects.length || !availableDepartments.length}
+                  disabled={saving || !availableSubjects.length || !availableDepartments.length || !groupsReady || !newGroupIds.length}
                   onClick={saveLecture}
                 >
                   {editing ? 'Сохранить' : 'Создать'}
