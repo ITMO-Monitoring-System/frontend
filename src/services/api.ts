@@ -147,9 +147,11 @@ export const listLecturesBySubject = (subjectId: number, from?: string, to?: str
     params: { from, to },
   })
 
-export const listLecturesByTeacher = (isu: string, from?: string, to?: string) =>
+export const listLecturesByTeacher = (isu: string, from?: string, to?: string, signal?: AbortSignal) =>
   api.get<Lecture[]>(`/api/teachers/${encodeURIComponent(isu)}/lectures`, {
     params: { from, to },
+    signal,
+    timeout: 5_000,
   })
 
 export const startLecture = async (lectureId?: string, body: any = { durable: true, auto_delete: false }) => {

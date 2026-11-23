@@ -7,6 +7,7 @@ import './lecture.css'
 import axios from 'axios'
 import { AuthTokenStorage } from '../services/authToken'
 import TeacherLectureList from './TeacherLectureList'
+import { waitForLectureStatus } from '../utils/lectureStatusSync'
 import TeacherAnalytics from './TeacherAnalytics'
 import CameraSender from './CameraSender'
 import type { CameraSenderHandle } from './CameraSender'
@@ -132,6 +133,11 @@ export default function LectureView() {
   const [listError, setListError] = useState('')
   const [loading, setLoading] = useState(true)
   const listRequest = useRef(0)
+  const statusSync = useRef<AbortController | null>(null)
+  const statusTarget = useRef<{ id: number; status: Lecture['status'] } | null>(null)
+  const [syncingLectureId, setSyncingLectureId] = useState<number | null>(null)
+  const [statusSyncError, setStatusSyncError] = useState('')
+  const teacherIsu = String(user?.isu ?? user?.id ?? '')
   const [newLectureDate, setNewLectureDate] = useState('')
   const [newSubjectId, setNewSubjectId] = useState('')
   const [newGroupIds, setNewGroupIds] = useState<string[]>([])
@@ -223,16 +229,6 @@ export default function LectureView() {
   }, [detections, localFaces, hasFrame])
 
   useEffect(() => {
-    if (!user) return
-    void loadTeacherLectures()
-    window.addEventListener('focus', loadTeacherLectures)
-    return () => {
-      listRequest.current++
-      window.removeEventListener('focus', loadTeacherLectures)
-    }
-  }, [user])
-
-  useEffect(() => {
     const missing = selectedDepartmentIds.filter(
       id => groupsByDepartment[id] === undefined && !failedDepartmentIds.includes(id)
     )
@@ -269,20 +265,72 @@ export default function LectureView() {
     return () => window.clearInterval(timer)
   }, [activeLectureId])
 
-  const loadTeacherLectures = async () => {
-    const teacherIsu = (user && (user.isu ?? user.id ?? '')) as string
+  const loadTeacherLectures = useCallback(async (signal?: AbortSignal) => {
     if (!teacherIsu) return
     const request = ++listRequest.current
     setLoading(true)
     try {
-      const res = await listLecturesByTeacher(teacherIsu, undefined, undefined)
-      if (request !== listRequest.current) return
-      setLectures(res.data || [])
+      const res = await listLecturesByTeacher(teacherIsu, undefined, undefined, signal)
+      if (signal?.aborted || request !== listRequest.current) return
+      const items = res.data || []
+      setLectures(items)
       setListError('')
+      const target = statusTarget.current
+      if (target && items.some(lecture => lecture.id === target.id && lecture.status === target.status)) {
+        statusTarget.current = null
+        setStatusSyncError('')
+      }
+      return items
     } catch {
-      if (request === listRequest.current) setListError('Не удалось загрузить лекции.')
+      if (!signal?.aborted && request === listRequest.current) setListError('Не удалось загрузить лекции.')
     } finally {
       if (request === listRequest.current) setLoading(false)
+    }
+  }, [teacherIsu])
+
+  useEffect(() => {
+    if (!teacherIsu) return
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout>
+    let refreshing = false
+    const refresh = async () => {
+      if (refreshing) return
+      refreshing = true
+      clearTimeout(timer)
+      if (!statusSync.current) await loadTeacherLectures(controller.signal)
+      refreshing = false
+      if (!controller.signal.aborted) timer = setTimeout(refresh, 5_000)
+    }
+    void refresh()
+    window.addEventListener('focus', refresh)
+    return () => {
+      controller.abort()
+      clearTimeout(timer)
+      statusSync.current?.abort()
+      statusSync.current = null
+      statusTarget.current = null
+      listRequest.current++
+      window.removeEventListener('focus', refresh)
+    }
+  }, [teacherIsu, loadTeacherLectures])
+
+  const synchronizeLectureStatus = async (id: number, expected: Lecture['status']) => {
+    statusSync.current?.abort()
+    const controller = new AbortController()
+    statusSync.current = controller
+    statusTarget.current = { id, status: expected }
+    setSyncingLectureId(id)
+    setStatusSyncError('')
+    try {
+      const confirmed = await waitForLectureStatus(loadTeacherLectures, id, expected, controller.signal)
+      if (!controller.signal.aborted && !confirmed) {
+        setStatusSyncError('Сервер пока не подтвердил изменение статуса лекции. Список продолжит обновляться автоматически.')
+      }
+    } finally {
+      if (statusSync.current === controller) {
+        statusSync.current = null
+        if (mountedRef.current) setSyncingLectureId(null)
+      }
     }
   }
 
@@ -581,7 +629,7 @@ export default function LectureView() {
       lastFrameTimestamp.current = null
       setLastFrameReceivedAt(null)
       setNow(Date.now())
-      void loadTeacherLectures()
+      void synchronizeLectureStatus(finalId, 'running')
       setActiveLectureId(finalId)
 
       // Connect events WebSocket (backend → frontend for recognition results)
@@ -635,6 +683,7 @@ export default function LectureView() {
   const stopSession = async () => {
     if (sessionActionRef.current) return
     sessionActionRef.current = 'stopping'
+    statusSync.current?.abort()
     const lid = currentLectureId.current
     setStatus('stopping')
     try {
@@ -663,7 +712,7 @@ export default function LectureView() {
         setAttendance({})
         setActiveLectureId(null)
       }
-      void loadTeacherLectures()
+      if (lid !== null) void synchronizeLectureStatus(lid, 'completed')
       setStatus('stopped')
     } catch (err: unknown) {
       setStatus('error')
@@ -702,6 +751,7 @@ export default function LectureView() {
 
   return (
     <div className="lecture-page layout-wide">
+      {statusSyncError && <p role="alert">{statusSyncError}</p>}
       <TeacherLectureList
         hidden={!catalogOpen}
         lectures={lectures}
@@ -709,7 +759,8 @@ export default function LectureView() {
         loading={loading}
         busy={busy}
         activeId={activeLectureId}
-        onRetry={loadTeacherLectures}
+        syncingId={syncingLectureId}
+        onRetry={() => { void loadTeacherLectures() }}
         onCreate={() => openLectureForm()}
         onEdit={openLectureForm}
         onOpen={openLecture}
@@ -735,7 +786,7 @@ export default function LectureView() {
                 <div>
                   <h2>{selected.subject_name}</h2>
                   <p>
-                    {new Date(selected.date).toLocaleString('ru-RU')} · {lectureStatus[selected.status]}
+                    {new Date(selected.date).toLocaleString('ru-RU')} · {syncingLectureId === selected.id ? 'Обновляем статус…' : lectureStatus[selected.status]}
                   </p>
                   <p>Направления: {selected.department_codes.join(', ') || '—'}</p>
                   <p>Группы: {selected.group_ids.join(', ') || '—'}</p>
@@ -762,7 +813,7 @@ export default function LectureView() {
                   <button
                     className="btn primary"
                     onClick={() => startSession()}
-                    disabled={busy || !selected}
+                    disabled={busy || !selected || syncingLectureId === selected.id}
                   >
                     {selected?.status === 'running' ? 'Подключиться' : 'Начать лекцию'}
                   </button>

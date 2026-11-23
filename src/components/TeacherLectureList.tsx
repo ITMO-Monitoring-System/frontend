@@ -8,6 +8,7 @@ type Props = {
   error: string;
   busy: boolean;
   activeId: number | null;
+  syncingId: number | null;
   onRetry: () => void;
   onCreate: () => void;
   onOpen: (lecture: Lecture) => void;
@@ -123,7 +124,7 @@ export default function TeacherLectureList(props: Props) {
             <header>
               <h3>{lecture.subject_name}</h3>
               <span className={'catalog-status ' + lecture.status}>
-                {lectureStatus[lecture.status]}
+                {props.syncingId === lecture.id ? 'Обновляем статус…' : lectureStatus[lecture.status]}
               </span>
             </header>
             <time dateTime={lecture.date}>
@@ -148,14 +149,14 @@ export default function TeacherLectureList(props: Props) {
               </button>
               <button
                 className="btn"
-                disabled={props.busy || lecture.status === 'running'}
+                disabled={props.busy || props.syncingId === lecture.id || lecture.status === 'running'}
                 onClick={() => props.onEdit(lecture)}
               >
                 Редактировать
               </button>
               <button
                 className="btn primary"
-                disabled={props.busy}
+                disabled={props.busy || props.syncingId === lecture.id}
                 onClick={() => props.onStart(lecture)}
               >
                 {lecture.status === 'running' ? 'Подключиться' : 'Запустить'}
