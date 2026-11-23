@@ -1,11 +1,13 @@
 import { localDateTimeToISO } from '../utils/localDateTime'
 import { useEffect, useRef, useState, useContext, useCallback } from 'react'
 import { AuthContext } from '../contexts/AuthContext'
-import type { Detection, Lecture, Department, Group, Subject } from '../types'
+import { lectureStatus, type Detection, type Lecture, type Department, type Group, type Subject } from '../types'
 import { exportAttendanceToXlsx, exportSessionsToXlsx } from '../utils/exportXlsx'
 import './lecture.css'
 import axios from 'axios'
 import { AuthTokenStorage } from '../services/authToken'
+import TeacherLectureList from './TeacherLectureList'
+import { waitForLectureStatus } from '../utils/lectureStatusSync'
 import TeacherAnalytics from './TeacherAnalytics'
 import CameraSender from './CameraSender'
 import type { CameraSenderHandle } from './CameraSender'
@@ -18,6 +20,7 @@ import {
   listSubjects,
   listLecturesByTeacher,
   createLecture,
+  updateLecture,
 } from '../services/api'
 
 const trimTrailingSlash = (value: string) => value.replace(/\/$/, '')
@@ -70,6 +73,15 @@ function fmtMs(ms: number) {
   return `${ss}s`
 }
 
+async function loadOptions<T>(fetchPage: (offset: number) => Promise<T[]>) {
+  const items: T[] = []
+  for (;;) {
+    const page = await fetchPage(items.length)
+    items.push(...page)
+    if (page.length < 200) return items
+  }
+}
+
 type AttendanceEntry = {
   isu: string
   name?: string
@@ -114,7 +126,18 @@ export default function LectureView() {
   const [lectures, setLectures] = useState<Lecture[]>([])
   const [selectedLectureId, setSelectedLectureId] = useState<number | ''>('')
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [isPractice, setIsPractice] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState('')
+  const [editing, setEditing] = useState<Lecture | null>(null)
+  const [catalogOpen, setCatalogOpen] = useState(true)
+  const [listError, setListError] = useState('')
+  const [loading, setLoading] = useState(true)
+  const listRequest = useRef(0)
+  const statusSync = useRef<AbortController | null>(null)
+  const statusTarget = useRef<{ id: number; status: Lecture['status'] } | null>(null)
+  const [syncingLectureId, setSyncingLectureId] = useState<number | null>(null)
+  const [statusSyncError, setStatusSyncError] = useState('')
+  const teacherIsu = String(user?.isu ?? user?.id ?? '')
   const [newLectureDate, setNewLectureDate] = useState('')
   const [newSubjectId, setNewSubjectId] = useState('')
   const [newGroupIds, setNewGroupIds] = useState<string[]>([])
@@ -206,11 +229,6 @@ export default function LectureView() {
   }, [detections, localFaces, hasFrame])
 
   useEffect(() => {
-    if (!user) return
-    loadTeacherLectures()
-  }, [user])
-
-  useEffect(() => {
     const missing = selectedDepartmentIds.filter(
       id => groupsByDepartment[id] === undefined && !failedDepartmentIds.includes(id)
     )
@@ -247,35 +265,97 @@ export default function LectureView() {
     return () => window.clearInterval(timer)
   }, [activeLectureId])
 
-  const loadTeacherLectures = async () => {
-    const teacherIsu = (user && (user.isu ?? user.id ?? '')) as string
+  const loadTeacherLectures = useCallback(async (signal?: AbortSignal) => {
     if (!teacherIsu) return
+    const request = ++listRequest.current
+    setLoading(true)
     try {
-      const res = await listLecturesByTeacher(teacherIsu, undefined, undefined)
-      setLectures(res.data || [])
+      const res = await listLecturesByTeacher(teacherIsu, undefined, undefined, signal)
+      if (signal?.aborted || request !== listRequest.current) return
+      const items = res.data || []
+      setLectures(items)
+      setListError('')
+      const target = statusTarget.current
+      if (target && items.some(lecture => lecture.id === target.id && lecture.status === target.status)) {
+        statusTarget.current = null
+        setStatusSyncError('')
+      }
+      return items
     } catch {
-      setLectures([])
+      if (!signal?.aborted && request === listRequest.current) setListError('Не удалось загрузить лекции.')
+    } finally {
+      if (request === listRequest.current) setLoading(false)
+    }
+  }, [teacherIsu])
+
+  useEffect(() => {
+    if (!teacherIsu) return
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout>
+    let refreshing = false
+    const refresh = async () => {
+      if (refreshing) return
+      refreshing = true
+      clearTimeout(timer)
+      if (!statusSync.current) await loadTeacherLectures(controller.signal)
+      refreshing = false
+      if (!controller.signal.aborted) timer = setTimeout(refresh, 5_000)
+    }
+    void refresh()
+    window.addEventListener('focus', refresh)
+    return () => {
+      controller.abort()
+      clearTimeout(timer)
+      statusSync.current?.abort()
+      statusSync.current = null
+      statusTarget.current = null
+      listRequest.current++
+      window.removeEventListener('focus', refresh)
+    }
+  }, [teacherIsu, loadTeacherLectures])
+
+  const synchronizeLectureStatus = async (id: number, expected: Lecture['status']) => {
+    statusSync.current?.abort()
+    const controller = new AbortController()
+    statusSync.current = controller
+    statusTarget.current = { id, status: expected }
+    setSyncingLectureId(id)
+    setStatusSyncError('')
+    try {
+      const confirmed = await waitForLectureStatus(loadTeacherLectures, id, expected, controller.signal)
+      if (!controller.signal.aborted && !confirmed) {
+        setStatusSyncError('Сервер пока не подтвердил изменение статуса лекции. Список продолжит обновляться автоматически.')
+      }
+    } finally {
+      if (statusSync.current === controller) {
+        statusSync.current = null
+        if (mountedRef.current) setSyncingLectureId(null)
+      }
     }
   }
 
-  const openCreateModal = async (practice: boolean) => {
-    setIsPractice(practice)
+  const openLectureForm = async (lecture: Lecture | null = null) => {
+    setFormError('')
+    setEditing(lecture)
     setAvailableDepartments([])
     setAvailableSubjects([])
     setGroupsByDepartment({})
     setFailedDepartmentIds([])
-    setSelectedDepartmentIds([])
-    setNewGroupIds([])
-    setNewSubjectId('')
-    setNewLectureDate('')
+    setSelectedDepartmentIds(lecture?.department_ids ?? [])
+    setNewGroupIds(lecture?.group_ids ?? [])
+    setNewSubjectId(lecture ? String(lecture.subject_id) : '')
+    const date = lecture && new Date(lecture.date)
+    setNewLectureDate(date ? new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : '')
     setShowCreateModal(true)
     try {
-      const [depsRes, subsRes] = await Promise.all([listDepartments({ limit: 200 }), listSubjects()])
-      setAvailableDepartments(depsRes.data.departments || [])
-      setAvailableSubjects(subsRes.data || [])
+      const [departments, subjects] = await Promise.all([
+        loadOptions(async offset => (await listDepartments({ limit: 200, offset })).data.departments),
+        loadOptions(async offset => (await listSubjects({ limit: 200, offset })).data),
+      ])
+      setAvailableDepartments(departments)
+      setAvailableSubjects(subjects)
     } catch {
-      setAvailableDepartments([])
-      setAvailableSubjects([])
+      setFormError('Не удалось загрузить предметы и направления.')
     }
   }
 
@@ -283,13 +363,13 @@ export default function LectureView() {
     const next = selectedDepartmentIds.includes(id)
       ? selectedDepartmentIds.filter(selectedId => selectedId !== id)
       : [...selectedDepartmentIds, id]
-    const validGroups = new Set(next.flatMap(departmentId => groupsByDepartment[departmentId] || []).map(group => group.code))
+    const removed = new Set((groupsByDepartment[id] || []).map(group => group.code))
     setSelectedDepartmentIds(next)
     setFailedDepartmentIds(previous => previous.filter(failedId => failedId !== id))
-    setNewGroupIds(previous => previous.filter(code => validGroups.has(code)))
+    if (!next.includes(id)) setNewGroupIds(previous => previous.filter(code => !removed.has(code)))
   }
 
-  const createLectureOrPracticeHandler = async () => {
+  const saveLecture = async () => {
     const teacherIsu = (user && (user.isu ?? user.id ?? '')) as string
     if (!teacherIsu) {
       alert('ISU преподавателя неизвестен')
@@ -307,6 +387,7 @@ export default function LectureView() {
       alert('Выберите хотя бы одну группу')
       return
     }
+    setSaving(true)
     try {
       const payload = {
         date: localDateTimeToISO(newLectureDate),
@@ -314,7 +395,7 @@ export default function LectureView() {
         group_ids: newGroupIds,
         teacher_id: teacherIsu,
       }
-      const created = await createLecture(payload)
+      const created = editing ? await updateLecture(editing.id, payload) : await createLecture(payload)
       setLectures(previous => [created.data, ...previous.filter(lecture => lecture.id !== created.data.id)])
       setSelectedLectureId(created.data.id)
       setShowCreateModal(false)
@@ -323,7 +404,9 @@ export default function LectureView() {
       setNewGroupIds([])
       loadTeacherLectures()
     } catch (err: any) {
-      alert(`Ошибка: ${err.response?.data?.error || err.message}`)
+      setFormError(err.response?.data?.error || err.message)
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -519,9 +602,9 @@ export default function LectureView() {
   const getLectureId = useCallback(() => currentLectureId.current, [])
   const getRunId = useCallback(() => currentRunId.current, [])
 
-  const startSession = async () => {
+  const startSession = async (lectureId = selectedLectureId) => {
     if (sessionActionRef.current || currentLectureId.current !== null) return
-    if (selectedLectureId === '') {
+    if (lectureId === '') {
       alert('Выберите лекцию из списка или создайте новую')
       return
     }
@@ -533,7 +616,6 @@ export default function LectureView() {
       if (!sender) throw new Error('Камера ещё не готова к запуску')
       await sender.prepare()
       if (!mountedRef.current) return
-      const lectureId = selectedLectureId
       const res = await startLectureFrame(lectureId, { durable: true, auto_delete: false })
       if (!mountedRef.current) return
       const returnedRaw = res?.data?.lecture_id ?? res?.data?.lectureId ?? lectureId
@@ -547,6 +629,7 @@ export default function LectureView() {
       lastFrameTimestamp.current = null
       setLastFrameReceivedAt(null)
       setNow(Date.now())
+      void synchronizeLectureStatus(finalId, 'running')
       setActiveLectureId(finalId)
 
       // Connect events WebSocket (backend → frontend for recognition results)
@@ -600,6 +683,7 @@ export default function LectureView() {
   const stopSession = async () => {
     if (sessionActionRef.current) return
     sessionActionRef.current = 'stopping'
+    statusSync.current?.abort()
     const lid = currentLectureId.current
     setStatus('stopping')
     try {
@@ -628,6 +712,7 @@ export default function LectureView() {
         setAttendance({})
         setActiveLectureId(null)
       }
+      if (lid !== null) void synchronizeLectureStatus(lid, 'completed')
       setStatus('stopped')
     } catch (err: unknown) {
       setStatus('error')
@@ -644,20 +729,6 @@ export default function LectureView() {
     }
   }
 
-  const onSelectLecture = (val: string) => {
-    if (sessionActionRef.current || currentLectureId.current !== null) return
-    const id = val ? parseInt(val, 10) : ''
-    const prev = currentLectureId.current
-    setSelectedLectureId(id === '' ? '' : id)
-    if (eventsSocketRef.current && prev !== null) {
-      try { sendUnsubscribe(prev) } catch { /* The old events socket may have closed. */ }
-    }
-    if (eventsSocketRef.current && id !== '') {
-      try { eventsSocketRef.current.send(JSON.stringify({ action: 'subscribe', lecture_id: id.toString() })) } catch { /* Reconnect subscribes again. */ }
-      subscriptionsRef.current.add(id as number)
-    }
-  }
-
   const exportCurrentSession = () => {
     const arr = Object.values(attendance).map(({ isu, name, history }) => ({
       id: isu, name: name ?? isu,
@@ -671,41 +742,56 @@ export default function LectureView() {
     exportSessionsToXlsx(sessionAttendanceRef.current, usersByIdRef.current, 'attendance_by_lecture.csv')
   }
 
-  const teacherIsuDisplay = (user && (user.isu ?? user.id ?? '')) as string
+  const selected = lectures.find(l => l.id === selectedLectureId)
+  const busy = activeLectureId !== null || status === 'starting' || status === 'stopping'
+  const openLecture = (lecture: Lecture) => {
+    setSelectedLectureId(lecture.id)
+    setCatalogOpen(false)
+  }
 
   return (
     <div className="lecture-page layout-wide">
-      <div className="lecture-main-container">
+      {statusSyncError && <p role="alert">{statusSyncError}</p>}
+      <TeacherLectureList
+        hidden={!catalogOpen}
+        lectures={lectures}
+        error={listError}
+        loading={loading}
+        busy={busy}
+        activeId={activeLectureId}
+        syncingId={syncingLectureId}
+        onRetry={() => { void loadTeacherLectures() }}
+        onCreate={() => openLectureForm()}
+        onEdit={openLectureForm}
+        onOpen={openLecture}
+        onStart={lecture => {
+          openLecture(lecture)
+          void startSession(lecture.id)
+        }}
+      />
+      <div className="lecture-main-container" hidden={catalogOpen}>
         <div className="lecture-left">
           <div className="lecture-top-row">
             <div className="lecture-selector">
-              <div className="selector-row">
-                <div className="teacher-badge">
-                  <div className="teacher-label">Мой ISU</div>
-                  <div className="teacher-value">{teacherIsuDisplay || '—'}</div>
+              <button
+                className="btn"
+                onClick={() => {
+                  setCatalogOpen(true)
+                  void loadTeacherLectures()
+                }}
+              >
+                К списку лекций
+              </button>
+              {selected && (
+                <div>
+                  <h2>{selected.subject_name}</h2>
+                  <p>
+                    {new Date(selected.date).toLocaleString('ru-RU')} · {syncingLectureId === selected.id ? 'Обновляем статус…' : lectureStatus[selected.status]}
+                  </p>
+                  <p>Направления: {selected.department_codes.join(', ') || '—'}</p>
+                  <p>Группы: {selected.group_ids.join(', ') || '—'}</p>
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn" onClick={() => openCreateModal(false)}>Создать лекцию</button>
-                </div>
-              </div>
-
-              <div className="lectures-list">
-                <label>Лекции</label>
-                <select
-                  className="lecture-select"
-                  value={selectedLectureId}
-                  onChange={e => onSelectLecture(e.target.value)}
-                  disabled={activeLectureId !== null || status === 'starting' || status === 'stopping'}
-                >
-                  <option value="">-- выберите лекцию --</option>
-                  {lectures.map(lec => (
-                    <option key={lec.id} value={String(lec.id)}>
-                      {new Date(lec.date).toLocaleString()} (ID: {lec.id})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
+              )}
             </div>
 
             <div className="lecture-controls">
@@ -726,10 +812,10 @@ export default function LectureView() {
                 {status !== 'running' && activeLectureId === null ? (
                   <button
                     className="btn primary"
-                    onClick={startSession}
-                    disabled={status === 'starting'}
+                    onClick={() => startSession()}
+                    disabled={busy || !selected || syncingLectureId === selected.id}
                   >
-                    Начать лекцию
+                    {selected?.status === 'running' ? 'Подключиться' : 'Начать лекцию'}
                   </button>
                 ) : (
                   <button className="btn secondary" onClick={stopSession} disabled={status === 'starting' || status === 'stopping'}>Остановить лекцию</button>
@@ -801,11 +887,12 @@ export default function LectureView() {
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
-              <h3>{isPractice ? 'Создать практику' : 'Создать лекцию'}</h3>
-              <button className="modal-close" onClick={() => setShowCreateModal(false)}>×</button>
+              <h3>{editing ? 'Редактировать лекцию' : 'Создать лекцию'}</h3>
+              <button className="modal-close" disabled={saving} onClick={() => setShowCreateModal(false)}>×</button>
             </div>
 
             <div className="modal-body">
+              {formError && <p role="alert">{formError}</p>}
               <div className="form-row">
                 <div className="form-group">
                   <label>Дата и время</label>
@@ -825,6 +912,7 @@ export default function LectureView() {
                         <input
                           type="checkbox"
                           checked={selectedDepartmentIds.includes(d.id)}
+                          disabled={selectedDepartmentIds.includes(d.id) && !groupsByDepartment[d.id]}
                           onChange={() => onDepartmentToggle(d.id)}
                         />
                         <span>{d.code} – {d.name}</span>
@@ -883,8 +971,14 @@ export default function LectureView() {
               </div>
 
               <div className="modal-actions">
-                <button className="btn" onClick={() => setShowCreateModal(false)}>Отмена</button>
-                <button className="btn primary" onClick={createLectureOrPracticeHandler}>Создать</button>
+                <button className="btn" disabled={saving} onClick={() => setShowCreateModal(false)}>Отмена</button>
+                <button
+                  className="btn primary"
+                  disabled={saving || !availableSubjects.length || !availableDepartments.length}
+                  onClick={saveLecture}
+                >
+                  {editing ? 'Сохранить' : 'Создать'}
+                </button>
               </div>
             </div>
           </div>

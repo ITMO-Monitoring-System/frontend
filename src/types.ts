@@ -46,10 +46,21 @@ export type Group = {
 }
 
 export type Lecture = {
+  subject_name: string
+  group_ids: string[]
+  department_ids: number[]
+  department_codes: string[]
+  status: 'scheduled' | 'running' | 'completed'
   date: string
   id: number
   subject_id: number
   teacher_id: string
+}
+
+export const lectureStatus: Record<Lecture['status'], string> = {
+  scheduled: 'Запланирована',
+  running: 'Идёт',
+  completed: 'Завершена',
 }
 
 export type Practice = {
